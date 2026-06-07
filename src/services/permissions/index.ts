@@ -1,0 +1,1 @@
+export { permissionService } from "./permission.service";
