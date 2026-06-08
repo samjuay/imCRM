@@ -10,8 +10,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reset = useAuthStore((state) => state.reset);
 
   useEffect(() => {
-    void initialize();
-
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (event) => {
@@ -20,7 +18,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED"
+      ) {
+        if (event === "INITIAL_SESSION") {
+          await initialize();
+          return;
+        }
+
         await refreshProfile();
       }
     });

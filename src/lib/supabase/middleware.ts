@@ -74,11 +74,6 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (pathname === UNAUTHORIZED_ROUTE) {
-    if (profile) {
-      return NextResponse.redirect(
-        new URL(getPostLoginRedirect(profile.role as UserRole), request.url),
-      );
-    }
     return supabaseResponse;
   }
 

@@ -36,12 +36,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated || !profile) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-32 w-full" />
-      </div>
-    );
+    return null;
   }
 
   return <>{children}</>;
