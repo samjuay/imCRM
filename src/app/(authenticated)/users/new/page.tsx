@@ -10,7 +10,8 @@ import { UserForm } from "@/features/users/components/user-form";
 import { ROUTES } from "@/utils/constants";
 
 function NewUserContent() {
-  const { teams, isLoading, refresh } = useUsers();
+  const { users, teams, isLoading, refresh } = useUsers();
+  const teamLeaders = users.filter((user) => user.role === "team_leader");
 
   if (isLoading) {
     return <Skeleton className="h-64 w-full max-w-lg" />;
@@ -32,7 +33,11 @@ function NewUserContent() {
         </div>
       </div>
 
-      <UserForm teams={teams} onTeamCreated={() => void refresh()} />
+      <UserForm
+        teams={teams}
+        teamLeaders={teamLeaders}
+        onTeamCreated={() => void refresh()}
+      />
     </div>
   );
 }

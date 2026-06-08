@@ -1,46 +1,7 @@
--- Sprint 2A Fixes: Site visit workflow, followup outcomes, teams, user management
+-- Corrective migration: users.team_leader_id + teams.team_leader_id (idempotent)
 
 -- ---------------------------------------------------------------------------
--- 1. Site visit status workflow
--- ---------------------------------------------------------------------------
-ALTER TABLE public.lead_site_visits
-  DROP CONSTRAINT IF EXISTS lead_site_visits_visit_status_check;
-
-UPDATE public.lead_site_visits
-SET visit_status = 'done'
-WHERE visit_status = 'completed';
-
-ALTER TABLE public.lead_site_visits
-  ADD CONSTRAINT lead_site_visits_visit_status_check
-  CHECK (visit_status IN ('planned', 'done', 'cancelled', 'rescheduled'));
-
--- ---------------------------------------------------------------------------
--- 2. Followup outcome tracking
--- ---------------------------------------------------------------------------
-ALTER TABLE public.lead_followups
-  ADD COLUMN IF NOT EXISTS outcome TEXT;
-
-ALTER TABLE public.lead_followups
-  DROP CONSTRAINT IF EXISTS lead_followups_outcome_check;
-
-ALTER TABLE public.lead_followups
-  ADD CONSTRAINT lead_followups_outcome_check
-  CHECK (outcome IS NULL OR outcome IN (
-    'pending',
-    'connected',
-    'no_response',
-    'interested',
-    'not_interested',
-    'rescheduled',
-    'cancelled'
-  ));
-
-UPDATE public.lead_followups
-SET outcome = 'pending'
-WHERE outcome IS NULL;
-
--- ---------------------------------------------------------------------------
--- 3. User hierarchy: team_leader_id on users (before teams references it)
+-- 1. users.team_leader_id (Sales Executive -> Team Leader)
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS team_leader_id UUID;
@@ -65,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_users_team_leader_id
   ON public.users(team_leader_id);
 
 -- ---------------------------------------------------------------------------
--- 4. Teams table (hierarchy support)
+-- 2. teams.team_leader_id (ensure column exists if teams table predates it)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.teams (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -104,7 +65,9 @@ CREATE TRIGGER trg_teams_updated_at
   BEFORE UPDATE ON public.teams
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Backfill teams.team_leader_id from team_leader users
+-- ---------------------------------------------------------------------------
+-- 3. Safe backfill: teams.team_leader_id from existing team_leader users
+-- ---------------------------------------------------------------------------
 UPDATE public.teams t
 SET team_leader_id = u.id
 FROM public.users u
@@ -115,7 +78,9 @@ WHERE t.team_leader_id IS NULL
   AND u.status <> 'disabled'
   AND u.id IS NOT NULL;
 
--- Backfill users.team_leader_id for sales executives
+-- ---------------------------------------------------------------------------
+-- 4. Safe backfill: users.team_leader_id for sales executives via team
+-- ---------------------------------------------------------------------------
 UPDATE public.users se
 SET team_leader_id = t.team_leader_id
 FROM public.teams t
@@ -126,7 +91,7 @@ WHERE se.team_leader_id IS NULL
   AND se.id <> t.team_leader_id;
 
 -- ---------------------------------------------------------------------------
--- 5. Teams RLS
+-- 5. teams RLS (idempotent)
 -- ---------------------------------------------------------------------------
 ALTER TABLE public.teams ENABLE ROW LEVEL SECURITY;
 
@@ -146,27 +111,6 @@ CREATE POLICY "teams_insert_admin"
 DROP POLICY IF EXISTS "teams_update_admin" ON public.teams;
 CREATE POLICY "teams_update_admin"
   ON public.teams FOR UPDATE TO authenticated
-  USING (
-    company_id = public.get_auth_user_company_id()
-    AND public.get_auth_user_role() IN ('super_admin', 'company_admin')
-  )
-  WITH CHECK (company_id = public.get_auth_user_company_id());
-
--- ---------------------------------------------------------------------------
--- 6. Users: company admin can create team members
--- ---------------------------------------------------------------------------
-DROP POLICY IF EXISTS "users_insert_admin" ON public.users;
-CREATE POLICY "users_insert_admin"
-  ON public.users FOR INSERT TO authenticated
-  WITH CHECK (
-    company_id = public.get_auth_user_company_id()
-    AND public.get_auth_user_role() IN ('super_admin', 'company_admin')
-    AND role IN ('team_leader', 'sales_executive')
-  );
-
-DROP POLICY IF EXISTS "users_update_admin" ON public.users;
-CREATE POLICY "users_update_admin"
-  ON public.users FOR UPDATE TO authenticated
   USING (
     company_id = public.get_auth_user_company_id()
     AND public.get_auth_user_role() IN ('super_admin', 'company_admin')

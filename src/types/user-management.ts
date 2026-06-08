@@ -6,5 +6,6 @@ export type CreateCompanyUserInput = {
   mobile: string;
   role: Extract<UserRole, "team_leader" | "sales_executive">;
   team_id: string | null;
+  team_leader_id?: string | null;
   status: string;
 };

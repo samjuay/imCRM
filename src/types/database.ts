@@ -5,6 +5,7 @@ export type DbUser = {
   auth_user_id: string;
   company_id: string;
   team_id: string | null;
+  team_leader_id: string | null;
   role: UserRole;
   full_name: string;
   mobile: string | null;

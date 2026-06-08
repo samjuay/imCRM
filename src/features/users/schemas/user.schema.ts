@@ -11,6 +11,7 @@ export const userFormSchema = z.object({
     message: "Role is required",
   }),
   team_id: z.string().optional().or(z.literal("")),
+  team_leader_id: z.string().optional().or(z.literal("")),
   new_team_name: z.string().optional(),
   status: z.enum(["active", "inactive"], {
     message: "Status is required",

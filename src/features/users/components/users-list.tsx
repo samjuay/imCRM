@@ -60,6 +60,9 @@ export function UsersList({ users, teams }: UsersListProps) {
               <th className="px-4 py-3 font-medium text-muted-foreground">Phone</th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Role</th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Team</th>
+              <th className="px-4 py-3 font-medium text-muted-foreground">
+                Team Leader
+              </th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
             </tr>
           </thead>
@@ -81,6 +84,11 @@ export function UsersList({ users, teams }: UsersListProps) {
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">
                   {getTeamName(user, teams)}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {user.role === "sales_executive"
+                    ? (user.team_leader_name ?? "—")
+                    : "—"}
                 </td>
                 <td className="px-4 py-3">
                   <Badge
@@ -118,6 +126,11 @@ export function UsersList({ users, teams }: UsersListProps) {
               <span className="text-xs text-muted-foreground">
                 Team: {getTeamName(user, teams)}
               </span>
+              {user.role === "sales_executive" && user.team_leader_name && (
+                <span className="text-xs text-muted-foreground">
+                  Leader: {user.team_leader_name}
+                </span>
+              )}
             </div>
           </div>
         ))}

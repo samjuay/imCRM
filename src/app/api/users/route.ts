@@ -3,6 +3,42 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CreateCompanyUserInput } from "@/types/user-management";
 
+async function resolveTeamLeaderId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  companyId: string,
+  body: CreateCompanyUserInput,
+) {
+  if (body.role !== "sales_executive") {
+    return null;
+  }
+
+  if (body.team_leader_id) {
+    const { data: leader } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", body.team_leader_id)
+      .eq("company_id", companyId)
+      .eq("role", "team_leader")
+      .neq("status", "disabled")
+      .maybeSingle();
+
+    return leader?.id ?? null;
+  }
+
+  if (!body.team_id) {
+    return null;
+  }
+
+  const { data: team } = await supabase
+    .from("teams")
+    .select("team_leader_id")
+    .eq("id", body.team_id)
+    .eq("company_id", companyId)
+    .maybeSingle();
+
+  return team?.team_leader_id ?? null;
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -30,6 +66,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
+    const teamLeaderId = await resolveTeamLeaderId(
+      supabase,
+      adminProfile.company_id,
+      body,
+    );
+
     const admin = createAdminClient();
     const tempPassword = crypto.randomUUID();
 
@@ -53,6 +95,7 @@ export async function POST(request: Request) {
         auth_user_id: createdAuth.user.id,
         company_id: adminProfile.company_id,
         team_id: body.team_id,
+        team_leader_id: teamLeaderId,
         role: body.role,
         full_name: body.full_name,
         mobile: body.mobile,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,17 +16,21 @@ import {
   userFormSchema,
   type UserFormValues,
 } from "@/features/users/schemas/user.schema";
+import type { CompanyUser } from "@/types/lead";
 import type { Team } from "@/types/team";
 import type { CreateCompanyUserInput } from "@/types/user-management";
 
 type UserFormProps = {
   teams: Team[];
+  teamLeaders: CompanyUser[];
   onTeamCreated: () => void;
 };
 
-export function UserForm({ teams, onTeamCreated }: UserFormProps) {
+export function UserForm({ teams, teamLeaders, onTeamCreated }: UserFormProps) {
   const router = useRouter();
   const profile = useUser();
+  const [selectedRole, setSelectedRole] =
+    useState<UserFormValues["role"]>("sales_executive");
 
   const {
     register,
@@ -39,6 +44,7 @@ export function UserForm({ teams, onTeamCreated }: UserFormProps) {
       mobile: "",
       role: "sales_executive",
       team_id: "",
+      team_leader_id: "",
       new_team_name: "",
       status: "active",
     },
@@ -75,6 +81,8 @@ export function UserForm({ teams, onTeamCreated }: UserFormProps) {
       mobile: data.mobile.replace(/\D/g, "").slice(-10),
       role: data.role,
       team_id: teamId,
+      team_leader_id:
+        data.role === "sales_executive" ? data.team_leader_id || null : null,
       status: data.status,
     };
 
@@ -137,7 +145,14 @@ export function UserForm({ teams, onTeamCreated }: UserFormProps) {
 
       <div className="space-y-2">
         <Label htmlFor="role">Role *</Label>
-        <Select id="role" {...register("role")} aria-invalid={!!errors.role}>
+        <Select
+          id="role"
+          {...register("role", {
+            onChange: (e) =>
+              setSelectedRole(e.target.value as UserFormValues["role"]),
+          })}
+          aria-invalid={!!errors.role}
+        >
           <option value="team_leader">Team Leader</option>
           <option value="sales_executive">Sales Executive</option>
         </Select>
@@ -154,6 +169,20 @@ export function UserForm({ teams, onTeamCreated }: UserFormProps) {
             {teams.map((team) => (
               <option key={team.id} value={team.id}>
                 {team.team_name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+
+      {selectedRole === "sales_executive" && teamLeaders.length > 0 && (
+        <div className="space-y-2">
+          <Label htmlFor="team_leader_id">Team Leader</Label>
+          <Select id="team_leader_id" {...register("team_leader_id")}>
+            <option value="">Auto-assign from team</option>
+            {teamLeaders.map((leader) => (
+              <option key={leader.id} value={leader.id}>
+                {leader.full_name}
               </option>
             ))}
           </Select>

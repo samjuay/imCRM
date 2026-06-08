@@ -1,6 +1,20 @@
 import { createClient } from "@/lib/supabase/client";
+import { normalizeRelation } from "@/lib/database/supabase-relations";
 import type { UserProfile } from "@/types/auth";
+import type { CompanyUser } from "@/types/lead";
 import type { DbUser } from "@/types/database";
+
+type RawCompanyUserRow = {
+  id: string;
+  full_name: string;
+  email: string;
+  mobile: string | null;
+  role: string;
+  team_id: string | null;
+  team_leader_id: string | null;
+  status: string;
+  team_leader: { full_name: string } | { full_name: string }[] | null;
+};
 
 function mapDbUserToProfile(row: DbUser): UserProfile {
   return {
@@ -15,15 +29,42 @@ function mapDbUserToProfile(row: DbUser): UserProfile {
   };
 }
 
+function mapCompanyUser(row: RawCompanyUserRow): CompanyUser {
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    email: row.email,
+    mobile: row.mobile,
+    role: row.role,
+    team_id: row.team_id,
+    team_leader_id: row.team_leader_id,
+    team_leader_name: normalizeRelation(row.team_leader)?.full_name ?? null,
+    status: row.status,
+  };
+}
+
 export const userService = {
   async getByCompany(companyId: string) {
     const supabase = createClient();
-    return supabase
+    const { data, error } = await supabase
       .from("users")
-      .select("id, full_name, email, mobile, role, team_id, status")
+      .select(
+        `id, full_name, email, mobile, role, team_id, team_leader_id, status,
+         team_leader:users!users_team_leader_id_fkey(full_name)`,
+      )
       .eq("company_id", companyId)
       .neq("status", "disabled")
       .order("full_name", { ascending: true });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const rows = (data ?? []) as unknown as RawCompanyUserRow[];
+    return {
+      data: rows.map(mapCompanyUser),
+      error: null,
+    };
   },
 
   async fetchProfileByAuthUserId(authUserId: string) {
@@ -31,7 +72,7 @@ export const userService = {
     const { data, error } = await supabase
       .from("users")
       .select(
-        "id, auth_user_id, company_id, team_id, role, full_name, email, status",
+        "id, auth_user_id, company_id, team_id, team_leader_id, role, full_name, email, status",
       )
       .eq("auth_user_id", authUserId)
       .maybeSingle();

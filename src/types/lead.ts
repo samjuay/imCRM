@@ -172,5 +172,7 @@ export type CompanyUser = {
   mobile: string | null;
   role: string;
   team_id: string | null;
+  team_leader_id: string | null;
+  team_leader_name?: string | null;
   status: string;
 };

@@ -29,7 +29,7 @@ export function useUsers() {
       setError(usersResult.error.message);
       setUsers([]);
     } else {
-      setUsers((usersResult.data ?? []) as CompanyUser[]);
+      setUsers(usersResult.data ?? []);
     }
 
     if (!teamsResult.error) {
@@ -59,7 +59,7 @@ export function useUsers() {
         setError(usersResult.error.message);
         setUsers([]);
       } else {
-        setUsers((usersResult.data ?? []) as CompanyUser[]);
+        setUsers(usersResult.data ?? []);
       }
 
       if (!teamsResult.error) {
