@@ -1,0 +1,1 @@
+export { leadService } from "./lead.service";

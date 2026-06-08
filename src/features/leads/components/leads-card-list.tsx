@@ -1,0 +1,67 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { ChevronRight, Phone } from "lucide-react";
+import { LeadPhoneLink } from "@/features/leads/components/lead-phone-link";
+import { LeadStatusBadge } from "@/features/leads/components/lead-status-badge";
+import type { LeadListItem } from "@/types/lead";
+
+function formatDate(date: string) {
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+type LeadsCardListProps = {
+  leads: LeadListItem[];
+};
+
+export function LeadsCardList({ leads }: LeadsCardListProps) {
+  const router = useRouter();
+
+  return (
+    <div className="space-y-3 md:hidden">
+      {leads.map((lead) => (
+        <div
+          key={lead.id}
+          role="button"
+          tabIndex={0}
+          onClick={() => router.push(`/leads/${lead.id}`)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              router.push(`/leads/${lead.id}`);
+            }
+          }}
+          className="flex cursor-pointer items-center justify-between rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/30"
+        >
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <p className="truncate font-medium text-primary">{lead.full_name}</p>
+              <LeadStatusBadge statusName={lead.status_name} />
+            </div>
+            <div
+              className="flex items-center gap-1.5 text-sm text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <Phone className="size-3.5 shrink-0" />
+              <LeadPhoneLink
+                phone={lead.phone}
+                className="text-sm text-muted-foreground hover:underline"
+              />
+            </div>
+            <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+              <span>{lead.source_name}</span>
+              <span>{lead.assigned_user_name ?? "Unassigned"}</span>
+              <span>{formatDate(lead.created_at)}</span>
+            </div>
+          </div>
+          <ChevronRight className="ml-2 size-5 shrink-0 text-muted-foreground" />
+        </div>
+      ))}
+    </div>
+  );
+}

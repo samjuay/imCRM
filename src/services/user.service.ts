@@ -16,6 +16,16 @@ function mapDbUserToProfile(row: DbUser): UserProfile {
 }
 
 export const userService = {
+  async getByCompany(companyId: string) {
+    const supabase = createClient();
+    return supabase
+      .from("users")
+      .select("id, full_name, email, mobile, role, team_id, status")
+      .eq("company_id", companyId)
+      .neq("status", "disabled")
+      .order("full_name", { ascending: true });
+  },
+
   async fetchProfileByAuthUserId(authUserId: string) {
     const supabase = createClient();
     const { data, error } = await supabase

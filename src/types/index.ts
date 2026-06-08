@@ -33,6 +33,24 @@ export type {
   PermissionModule,
   RolePermission,
 } from "./permissions";
+export type {
+  CompanyUser,
+  CreateLeadFollowupInput,
+  CreateLeadInput,
+  CreateLeadNoteInput,
+  CreateLeadSiteVisitInput,
+  FollowupStatus,
+  Lead,
+  LeadDetail,
+  LeadFilters,
+  LeadFollowup,
+  LeadListItem,
+  LeadNote,
+  LeadSiteVisit,
+  PaginatedResult,
+  SiteVisitStatus,
+  UpdateLeadInput,
+} from "./lead";
 
 export type NavItem = {
   label: string;

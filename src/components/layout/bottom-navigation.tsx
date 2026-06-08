@@ -7,6 +7,7 @@ import {
   Building2,
   Home,
   User,
+  UserCog,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +20,7 @@ const iconMap: Record<string, LucideIcon> = {
   building: Building2,
   activity: Activity,
   user: User,
+  userCog: UserCog,
 };
 
 export function BottomNavigation() {

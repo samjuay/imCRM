@@ -12,6 +12,8 @@ export const ROUTES = {
   profile: "/profile",
   masterData: "/master-data",
   permissions: "/permissions",
+  users: "/users",
+  usersNew: "/users/new",
 } as const;
 
 export const BREAKPOINTS = {
@@ -25,5 +27,6 @@ export const NAV_ITEMS = [
   { label: "Leads", href: ROUTES.leads, icon: "users" },
   { label: "Projects", href: ROUTES.projects, icon: "building" },
   { label: "Activities", href: ROUTES.activities, icon: "activity" },
+  { label: "Users", href: ROUTES.users, icon: "userCog" },
   { label: "Profile", href: ROUTES.profile, icon: "user" },
 ] as const;
