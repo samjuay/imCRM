@@ -1,0 +1,10 @@
+---
+pid: 17792
+cwd: "C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm"
+command: "try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 10; \"HOME:$($r.StatusCode) len:$($r.Content.Length)\" } catch { \"HOME_ERR:$($_.Exception.Message)\" }; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/auth/me\" -UseBasicParsing -TimeoutSec 10 } catch { \"AUTH_ME:$($_.Exception.Response.StatusCode.value__)\" }; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/users\" -UseBasicParsing -TimeoutSec 10 } catch { \"USERS_GET:$($_.Exception.Response.StatusCode.value__)\" }"
+started_at: 2026-06-08T11:56:37.415Z
+running_for_ms: 13370003 
+---
+HOME_ERR:The operation has timed out.
+AUTH_ME:
+USERS_GET:

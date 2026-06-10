@@ -1,0 +1,27 @@
+---
+pid: 17576
+cwd: "C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm"
+command: "Set-Location \"C:\\Users\\samju.IMMATION\\OneDrive\\Desktop\\imcrm\"; if (Test-Path .next) { Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue }; pnpm dev"
+started_at: 2026-06-08T12:54:00.249Z
+running_for_ms: 9950007  
+---
+$ next dev
+   ▲ Next.js 15.5.19
+   - Local:        http://localhost:3000
+   - Network:      http://10.169.131.214:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 4.9s
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 3s (173 modules)
+ ○ Compiling /login ...
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (102kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (243kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+ ✓ Compiled /login in 21.8s (1820 modules)
+ GET /login?redirect=%2F 200 in 4558ms
+ ✓ Compiled in 3.1s (828 modules)
+ ✓ Compiled in 534ms (828 modules)
+ ✓ Compiled in 454ms (828 modules)
+ ✓ Compiled in 1767ms (828 modules)
+

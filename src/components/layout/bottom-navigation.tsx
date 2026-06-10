@@ -12,7 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS } from "@/utils/constants";
+import { NAV_ITEMS, ROUTES } from "@/utils/constants";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const iconMap: Record<string, LucideIcon> = {
   home: Home,
@@ -25,6 +26,7 @@ const iconMap: Record<string, LucideIcon> = {
 
 export function BottomNavigation() {
   const pathname = usePathname();
+  const { can } = usePermissions();
 
   return (
     <nav
@@ -33,7 +35,9 @@ export function BottomNavigation() {
       aria-label="Main navigation"
     >
       <ul className="flex h-full items-stretch justify-around px-1">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) =>
+          item.href === ROUTES.users ? can("users", "view") : true
+        ).map((item) => {
           const Icon = iconMap[item.icon] ?? Home;
           const isActive =
             item.href === "/"

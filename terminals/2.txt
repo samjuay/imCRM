@@ -1,0 +1,30 @@
+---
+pid: 6728
+cwd: "C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm"
+command: "Invoke-WebRequest -Uri \"http://localhost:3000/\" -MaximumRedirection 0 -ErrorAction SilentlyContinue | Select-Object StatusCode, Headers; Invoke-WebRequest -Uri \"http://localhost:3000/api/auth/me\" -ErrorAction SilentlyContinue | Select-Object StatusCode; Invoke-WebRequest -Uri \"http://localhost:3000/api/users\" -Method GET -ErrorAction SilentlyContinue | Select-Object StatusCode"
+started_at: 2026-06-08T11:56:02.783Z
+running_for_ms: 13395005 
+---
+Invoke-WebRequest : Windows PowerShell is in NonInteractive mode. Read and Prompt functionality is not available.
+At line:1 char:1
++ Invoke-WebRequest -Uri "http://localhost:3000/" -MaximumRedirection 0 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Invoke-WebRequest], PSInvalidOperationException
+    + FullyQualifiedErrorId : InvalidOperation,Microsoft.PowerShell.Commands.InvokeWebRequestCommand
+ 
+Invoke-WebRequest : The remote server returned an error: (500) Internal Server Error.
+At line:1 char:138
++ ... e, Headers; Invoke-WebRequest -Uri "http://localhost:3000/api/auth/me ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:HttpWebRequest) [Invoke-WebRequest], WebExc 
+   eption
+    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.PowerShell.Commands.InvokeWebRequestCommand
+ 
+Invoke-WebRequest : The remote server returned an error: (500) Internal Server Error.
+At line:1 char:255
++ ... StatusCode; Invoke-WebRequest -Uri "http://localhost:3000/api/users"  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:HttpWebRequest) [Invoke-WebRequest], WebExc 
+   eption
+    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.PowerShell.Commands.InvokeWebRequestCommand
+ 

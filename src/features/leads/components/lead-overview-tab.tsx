@@ -2,10 +2,14 @@
 
 import { LeadStatusBadge } from "@/features/leads/components/lead-status-badge";
 import { LeadPhoneLink } from "@/features/leads/components/lead-phone-link";
-import type { LeadDetail } from "@/types/lead";
+import type { LeadDetail, LeadSiteVisit, LeadStatusUpdate } from "@/types/lead";
+import type { Project } from "@/types/project";
 
 type LeadOverviewTabProps = {
   lead: LeadDetail;
+  projects?: Project[];
+  siteVisits?: LeadSiteVisit[];
+  statusUpdates?: LeadStatusUpdate[];
 };
 
 function formatCurrency(value: number | null) {
@@ -17,7 +21,7 @@ function formatCurrency(value: number | null) {
   }).format(value);
 }
 
-export function LeadOverviewTab({ lead }: LeadOverviewTabProps) {
+export function LeadOverviewTab({ lead, projects, siteVisits, statusUpdates }: LeadOverviewTabProps) {
   return (
     <div className="space-y-6">
       <LeadStatusBadge statusName={lead.status_name} />
@@ -70,6 +74,30 @@ export function LeadOverviewTab({ lead }: LeadOverviewTabProps) {
           </dd>
         </div>
       </dl>
+
+      {/* Linked Projects (read-only, from site visits and status updates) */}
+      {(siteVisits && siteVisits.length > 0) || (statusUpdates && statusUpdates.length > 0) ? (
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Linked Projects</dt>
+          <dd className="mt-0.5 text-sm">
+            {(() => {
+              const linkedIds = new Set<string>();
+              (siteVisits ?? []).forEach((v) => {
+                if (v.project_id) linkedIds.add(v.project_id);
+              });
+              (statusUpdates ?? []).forEach((u) => {
+                if (u.project_id) linkedIds.add(u.project_id);
+              });
+              if (linkedIds.size === 0) return "—";
+              const names = Array.from(linkedIds)
+                .map((id) => projects?.find((p) => p.id === id)?.project_name)
+                .filter(Boolean) as string[];
+              const uniqueNames = Array.from(new Set(names));
+              return uniqueNames.length > 0 ? uniqueNames.join(", ") : "—";
+            })()}
+          </dd>
+        </div>
+      ) : null}
     </div>
   );
 }

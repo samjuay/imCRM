@@ -16,9 +16,11 @@ function formatDate(date: string) {
 
 type LeadsCardListProps = {
   leads: LeadListItem[];
+  selectedIds?: string[];
+  onToggleSelect?: (id: string) => void;
 };
 
-export function LeadsCardList({ leads }: LeadsCardListProps) {
+export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: LeadsCardListProps) {
   const router = useRouter();
 
   return (
@@ -37,6 +39,16 @@ export function LeadsCardList({ leads }: LeadsCardListProps) {
           }}
           className="flex cursor-pointer items-center justify-between rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/30"
         >
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(lead.id)}
+              onChange={() => onToggleSelect(lead.id)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              className="mr-3 h-4 w-4 accent-gold"
+            />
+          )}
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex items-center gap-2">
               <p className="truncate font-medium text-primary">{lead.full_name}</p>

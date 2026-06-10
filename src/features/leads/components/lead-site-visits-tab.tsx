@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { cn } from "@/lib/utils";
 import { useUser } from "@/hooks/use-user";
 import { leadService } from "@/services/leads";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,7 @@ export function LeadSiteVisitsTab({
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<'planned' | 'done'>('planned');
 
   const {
     register,
@@ -119,6 +121,16 @@ export function LeadSiteVisitsTab({
     setRescheduleDate(toDatetimeLocalValue(visit.visit_date));
   };
 
+  const plannedVisits = [...siteVisits]
+    .filter((v) => v.visit_status === "planned" || v.visit_status === "rescheduled")
+    .sort((a, b) => new Date(a.visit_date).getTime() - new Date(b.visit_date).getTime());
+
+  const doneVisits = [...siteVisits]
+    .filter((v) => v.visit_status === "done")
+    .sort((a, b) => new Date(b.visit_date).getTime() - new Date(a.visit_date).getTime());
+
+  const currentVisits = activeView === "planned" ? plannedVisits : doneVisits;
+
   return (
     <div className="space-y-6">
       <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2">
@@ -163,108 +175,152 @@ export function LeadSiteVisitsTab({
         </div>
       </form>
 
-      {siteVisits.length === 0 ? (
+      <div className="flex gap-2 border-b border-border pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveView("planned")}
+          className={cn(
+            "px-3 py-1 text-sm font-medium rounded",
+            activeView === "planned"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:bg-muted/80"
+          )}
+        >
+          Planned
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveView("done")}
+          className={cn(
+            "px-3 py-1 text-sm font-medium rounded",
+            activeView === "done"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:bg-muted/80"
+          )}
+        >
+          Done
+        </button>
+      </div>
+
+      {currentVisits.length === 0 ? (
         <LeadEmptyState
-          title="No site visits yet"
-          description="Schedule the first site visit for this lead."
+          title={activeView === "planned" ? "No upcoming visits" : "No completed visits"}
+          description={
+            activeView === "planned"
+              ? "Schedule a visit using the form above."
+              : "Visits you mark Done will appear here."
+          }
         />
       ) : (
         <div className="space-y-3">
-          {siteVisits.map((visit) => (
-            <div
-              key={visit.id}
-              className="rounded-lg border border-border bg-card p-4"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">
-                  {visit.project_name ?? "No project selected"}
-                </span>
-                <Badge variant="outline">
-                  {STATUS_LABELS[visit.visit_status]}
-                </Badge>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {new Date(visit.visit_date).toLocaleString("en-IN")}
-              </p>
-              {visit.remarks && (
-                <p className="mt-2 text-sm">{visit.remarks}</p>
-              )}
-              <p className="mt-2 text-xs text-muted-foreground">
-                by {visit.created_by_name ?? "Unknown"}
-              </p>
+          {currentVisits.map((visit) => {
+            const isDoneView = activeView === "done";
+            return (
+              <div
+                key={visit.id}
+                className="rounded-lg border border-border bg-card p-4"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">
+                    {visit.project_name ?? "No project selected"}
+                  </span>
+                  <Badge variant="outline">
+                    {STATUS_LABELS[visit.visit_status]}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {new Date(visit.visit_date).toLocaleString("en-IN")}
+                </p>
+                {visit.remarks && (
+                  <p className="mt-2 text-sm">{visit.remarks}</p>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  by {visit.created_by_name ?? "Unknown"}
+                </p>
 
-              {reschedulingId === visit.id ? (
-                <div className="mt-3 flex flex-wrap items-end gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor={`reschedule-${visit.id}`} className="text-xs">
-                      New date & time
-                    </Label>
-                    <Input
-                      id={`reschedule-${visit.id}`}
-                      type="datetime-local"
-                      value={rescheduleDate}
-                      onChange={(e) => setRescheduleDate(e.target.value)}
-                    />
+                {reschedulingId === visit.id ? (
+                  <div className="mt-3 flex flex-wrap items-end gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`reschedule-${visit.id}`} className="text-xs">
+                        New date & time
+                      </Label>
+                      <Input
+                        id={`reschedule-${visit.id}`}
+                        type="datetime-local"
+                        value={rescheduleDate}
+                        onChange={(e) => setRescheduleDate(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="gold"
+                      disabled={!rescheduleDate || updatingId === visit.id}
+                      onClick={() =>
+                        void updateVisitStatus(
+                          visit.id,
+                          "rescheduled",
+                          rescheduleDate,
+                        )
+                      }
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setReschedulingId(null);
+                        setRescheduleDate("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="gold"
-                    disabled={!rescheduleDate || updatingId === visit.id}
-                    onClick={() =>
-                      void updateVisitStatus(
-                        visit.id,
-                        "rescheduled",
-                        rescheduleDate,
-                      )
-                    }
-                  >
-                    Save
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setReschedulingId(null);
-                      setRescheduleDate("");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={updatingId === visit.id}
-                    onClick={() =>
-                      void updateVisitStatus(visit.id, "done")
-                    }
-                  >
-                    Mark Done
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={updatingId === visit.id}
-                    onClick={() => startReschedule(visit)}
-                  >
-                    Reschedule
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={updatingId === visit.id}
-                    onClick={() =>
-                      void updateVisitStatus(visit.id, "cancelled")
-                    }
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!isDoneView && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={updatingId === visit.id}
+                        onClick={() => void updateVisitStatus(visit.id, "done")}
+                      >
+                        Mark Done
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={updatingId === visit.id}
+                      onClick={() => startReschedule(visit)}
+                    >
+                      Reschedule
+                    </Button>
+                    {!isDoneView && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={updatingId === visit.id}
+                        onClick={() => void updateVisitStatus(visit.id, "cancelled")}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                    {isDoneView && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={updatingId === visit.id}
+                        onClick={() => void updateVisitStatus(visit.id, "planned")}
+                      >
+                        Reopen as Planned
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

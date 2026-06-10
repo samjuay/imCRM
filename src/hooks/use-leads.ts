@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { filterCompanyUsersForScope } from "@/lib/auth/lead-scope";
 import { useUser } from "@/hooks/use-user";
 import { leadService } from "@/services/leads";
 import { userService } from "@/services/user.service";
@@ -67,14 +68,16 @@ export function useLeads(initialFilters: LeadFilters = {}) {
   }, [companyId, filters, page, refreshKey]);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId || !user) return;
 
     void userService.getByCompany(companyId).then(({ data }) => {
       if (data) {
-        setCompanyUsers(data as CompanyUser[]);
+        setCompanyUsers(
+          filterCompanyUsersForScope(user, data as CompanyUser[], "view"),
+        );
       }
     });
-  }, [companyId]);
+  }, [companyId, user]);
 
   const updateFilters = (next: LeadFilters) => {
     setFilters(next);

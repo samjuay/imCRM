@@ -10,6 +10,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reset = useAuthStore((state) => state.reset);
 
   useEffect(() => {
+    // Bootstrap initialize() immediately on mount. Guarantees isLoading=false and
+    // profile (or null) is resolved so AuthGuard can decide (render or redirect to
+    // unauthorized/login) instead of infinite skeleton when INITIAL_SESSION event
+    // is missed due to subscribe timing.
+    initialize();
+
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (event) => {

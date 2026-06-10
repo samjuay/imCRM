@@ -13,14 +13,23 @@ function formatDate(date: string) {
 
 type LeadsTableProps = {
   leads: LeadListItem[];
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 };
 
-export function LeadsTable({ leads }: LeadsTableProps) {
+export function LeadsTable({ leads, selectedIds, onToggleSelect }: LeadsTableProps) {
+  const showSelection = selectedIds !== undefined && onToggleSelect !== undefined;
+  const effectiveSelected = selectedIds ?? new Set<string>();
   return (
     <div className="hidden overflow-hidden rounded-xl border border-border bg-card md:block">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/40 text-left">
+            {showSelection && (
+              <th className="px-4 py-3 font-medium text-muted-foreground w-8">
+                {/* Sprint 3B: current page bulk selection only */}
+              </th>
+            )}
             <th className="px-4 py-3 font-medium text-muted-foreground">Name</th>
             <th className="px-4 py-3 font-medium text-muted-foreground">Phone</th>
             <th className="px-4 py-3 font-medium text-muted-foreground">Source</th>
@@ -35,6 +44,16 @@ export function LeadsTable({ leads }: LeadsTableProps) {
               key={lead.id}
               className="border-b border-border last:border-0 hover:bg-muted/20"
             >
+              {showSelection && (
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={effectiveSelected.has(lead.id)}
+                    onChange={() => onToggleSelect?.(lead.id)}
+                    className="h-4 w-4"
+                  />
+                </td>
+              )}
               <td className="px-4 py-3">
                 <Link
                   href={`/leads/${lead.id}`}

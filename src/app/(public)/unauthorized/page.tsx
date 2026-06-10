@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,11 +16,25 @@ import { ROUTES } from "@/utils/constants";
 
 export default function UnauthorizedPage() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { signOut, isLoading, profile } = useAuth();
+
+  // If profile loads successfully (e.g. race in signIn path where fetch saw no session
+  // so returned null -> unauthorized, but later refresh/init populates it), auto
+  // redirect to home instead of showing "not configured" message forever.
+  useEffect(() => {
+    if (!isLoading && profile) {
+      router.replace(ROUTES.home);
+    }
+  }, [isLoading, profile, router]);
 
   const handleSignOut = async () => {
-    await signOut();
-    router.replace(ROUTES.login);
+    try {
+      await signOut();
+      router.replace(ROUTES.login);
+    } catch {
+      // still try navigate to allow logout even if signOut had issue (e.g. session close)
+      router.replace(ROUTES.login);
+    }
   };
 
   return (

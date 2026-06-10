@@ -29,6 +29,7 @@ type LeadFormProps = {
 export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
   const router = useRouter();
   const user = useUser();
+  const isSalesExecutive = user?.role === "sales_executive";
   const { leadSources, leadStatuses } = useMasterData();
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
@@ -51,6 +52,7 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
       requirement: lead?.requirement ?? "",
       remarks: lead?.remarks ?? "",
       assigned_user_id: lead?.assigned_user_id ?? "",
+      assignment_reason: "",
     },
   });
 
@@ -78,7 +80,15 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
   const onSubmit = async (data: LeadFormValues) => {
     if (!user?.company_id || !user.user_id) return;
 
-    const payload = {
+    if (!user?.company_id || !user.user_id) return;
+
+    // For create: explicit assignment is required (per Sprint 3B ownership model)
+    // For edit: if assigned_user_id changed, use dedicated assignLead (never detection in update())
+    const originalAssigned = lead?.assigned_user_id ?? null;
+    const newAssigned = data.assigned_user_id || null;
+    const reason = data.assignment_reason || null;
+
+    const otherPayload = {
       full_name: data.full_name,
       phone: data.phone,
       email: data.email || null,
@@ -88,13 +98,17 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
       location: data.location || null,
       requirement: data.requirement || null,
       remarks: data.remarks || null,
-      assigned_user_id: data.assigned_user_id || null,
     };
 
     if (mode === "create") {
+      // Creation requires explicit assignment (no auto to creator, no NULL)
+      if (!newAssigned) {
+        toast.error("Assigned To is required to create a lead");
+        return;
+      }
       const { data: created, error } = await leadService.create(
         user.company_id,
-        { ...payload, created_by: user.user_id },
+        { ...otherPayload, assigned_user_id: newAssigned, created_by: user.user_id } as any,
       );
 
       if (error) {
@@ -102,6 +116,7 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
         return;
       }
 
+      // Optionally log initial assignment, but per plan creation itself is the event; subsequent re-assignments use assignLead
       toast.success("Lead created successfully");
       router.replace(`/leads/${created.id}`);
       return;
@@ -109,10 +124,38 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
 
     if (!lead) return;
 
+    // Edit path: use dedicated assignLead if assignee changed (assignment logic only in assignLead)
+    if (newAssigned !== originalAssigned) {
+      const { success, error: assignErr } = await leadService.assignLead(
+        user.company_id,
+        lead.id,
+        newAssigned,
+        user.user_id,
+        reason
+      );
+      if (!success) {
+        toast.error(assignErr?.message || "Failed to assign lead");
+        return;
+      }
+      // Still update other fields if any changed (non-assignment)
+      const hasOtherChanges = Object.keys(otherPayload).some((k) => (otherPayload as any)[k] !== (lead as any)[k]);
+      if (hasOtherChanges) {
+        const { error: otherErr } = await leadService.update(user.company_id, lead.id, otherPayload as any);
+        if (otherErr) {
+          toast.error(otherErr.message);
+          return;
+        }
+      }
+      toast.success("Lead updated (assignment recorded)");
+      router.replace(`/leads/${lead.id}`);
+      return;
+    }
+
+    // No assignee change: normal update (assignment logic untouched)
     const { error } = await leadService.update(
       user.company_id,
       lead.id,
-      payload,
+      { ...otherPayload, assigned_user_id: originalAssigned } as any,
     );
 
     if (error) {
@@ -213,15 +256,42 @@ export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="assigned_user_id">Assigned User</Label>
-          <Select id="assigned_user_id" {...register("assigned_user_id")}>
-            <option value="">Unassigned</option>
+          <Label htmlFor="assigned_user_id">Assigned To *</Label>
+          <Select
+            id="assigned_user_id"
+            {...register("assigned_user_id")}
+            disabled={mode === "edit" && isSalesExecutive}
+          >
+            {/* For create: no unassigned option (explicit assignment required per Sprint 3B model).
+                For edit: allow keeping current (even if was null in legacy data). */}
+            {mode === "create" ? null : <option value="">Unassigned (legacy)</option>}
             {companyUsers.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.full_name}
               </option>
             ))}
           </Select>
+          {errors.assigned_user_id && (
+            <p className="text-sm text-destructive">{errors.assigned_user_id.message}</p>
+          )}
+          {mode === "edit" && isSalesExecutive && (
+            <p className="text-xs text-muted-foreground">Sales executives cannot change lead assignment.</p>
+          )}
+        </div>
+
+        {/* Sprint 3B: optional assignment reason (max 500 chars, validated in UI) */}
+        <div className="space-y-2 sm:col-span-2">
+          <Label htmlFor="assignment_reason">Assignment Reason (optional)</Label>
+          <Textarea
+            id="assignment_reason"
+            rows={2}
+            placeholder="e.g. Round robin distribution, Employee resigned, Manual reassignment"
+            {...register("assignment_reason")}
+            maxLength={500}
+          />
+          {errors.assignment_reason && (
+            <p className="text-sm text-destructive">{errors.assignment_reason.message}</p>
+          )}
         </div>
 
         <div className="space-y-2">

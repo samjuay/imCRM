@@ -10,7 +10,7 @@ import { UserForm } from "@/features/users/components/user-form";
 import { ROUTES } from "@/utils/constants";
 
 function NewUserContent() {
-  const { users, teams, isLoading, refresh } = useUsers();
+  const { users, teams, isLoading } = useUsers();
   const teamLeaders = users.filter((user) => user.role === "team_leader");
 
   if (isLoading) {
@@ -36,7 +36,6 @@ function NewUserContent() {
       <UserForm
         teams={teams}
         teamLeaders={teamLeaders}
-        onTeamCreated={() => void refresh()}
       />
     </div>
   );

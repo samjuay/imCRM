@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useUser } from "@/hooks/use-user";
-import { teamService } from "@/services/teams";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,10 +22,9 @@ import type { CreateCompanyUserInput } from "@/types/user-management";
 type UserFormProps = {
   teams: Team[];
   teamLeaders: CompanyUser[];
-  onTeamCreated: () => void;
 };
 
-export function UserForm({ teams, teamLeaders, onTeamCreated }: UserFormProps) {
+export function UserForm({ teams, teamLeaders }: UserFormProps) {
   const router = useRouter();
   const profile = useUser();
   const [selectedRole, setSelectedRole] =
@@ -47,32 +45,19 @@ export function UserForm({ teams, teamLeaders, onTeamCreated }: UserFormProps) {
       team_leader_id: "",
       new_team_name: "",
       status: "active",
+      password: "",
+      confirmPassword: "",
     },
   });
 
   const onSubmit = async (data: UserFormValues) => {
     if (!profile?.company_id) return;
 
-    let teamId = data.team_id || null;
+    const teamId = data.team_id || null;
 
     if (!teamId && teams.length === 0 && !data.new_team_name?.trim()) {
       toast.error("Team name is required");
       return;
-    }
-
-    if (!teamId && data.new_team_name?.trim()) {
-      const { data: createdTeam, error: teamError } = await teamService.create(
-        profile.company_id,
-        { team_name: data.new_team_name.trim() },
-      );
-
-      if (teamError || !createdTeam) {
-        toast.error(teamError?.message ?? "Failed to create team");
-        return;
-      }
-
-      teamId = createdTeam.id;
-      onTeamCreated();
     }
 
     const payload: CreateCompanyUserInput = {
@@ -83,7 +68,9 @@ export function UserForm({ teams, teamLeaders, onTeamCreated }: UserFormProps) {
       team_id: teamId,
       team_leader_id:
         data.role === "sales_executive" ? data.team_leader_id || null : null,
+      new_team_name: data.new_team_name?.trim() || null,
       status: data.status,
+      password: data.password,
     };
 
     const response = await fetch("/api/users", {
@@ -208,6 +195,32 @@ export function UserForm({ teams, teamLeaders, onTeamCreated }: UserFormProps) {
         </Select>
         {errors.status && (
           <p className="text-sm text-destructive">{errors.status.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="password">Password *</Label>
+        <Input
+          id="password"
+          type="password"
+          {...register("password")}
+          aria-invalid={!!errors.password}
+        />
+        {errors.password && (
+          <p className="text-sm text-destructive">{errors.password.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="confirmPassword">Confirm Password *</Label>
+        <Input
+          id="confirmPassword"
+          type="password"
+          {...register("confirmPassword")}
+          aria-invalid={!!errors.confirmPassword}
+        />
+        {errors.confirmPassword && (
+          <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
         )}
       </div>
 

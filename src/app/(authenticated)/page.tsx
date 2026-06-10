@@ -25,9 +25,9 @@ const MODULES = [
   },
   {
     title: "Activities",
-    description: "Team activity timeline",
+    description: "Team activity timeline — due, overdue, upcoming & recent",
     href: ROUTES.activities,
-    available: false,
+    available: true,
   },
 ] as const;
 

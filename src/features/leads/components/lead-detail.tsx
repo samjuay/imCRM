@@ -4,17 +4,12 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { useLead } from "@/hooks/use-lead";
-import { useUser } from "@/hooks/use-user";
-import { usePermissions } from "@/hooks/use-permissions";
-import { leadService } from "@/services/leads";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/toast";
 import { LeadErrorState } from "@/features/leads/components/lead-error-state";
-import { LeadFollowupsTab } from "@/features/leads/components/lead-followups-tab";
 import { LeadNotesTab } from "@/features/leads/components/lead-notes-tab";
 import { LeadOverviewTab } from "@/features/leads/components/lead-overview-tab";
-import { LeadSiteVisitsTab } from "@/features/leads/components/lead-site-visits-tab";
+import { LeadActivityTimelineTab } from "@/features/leads/components/lead-status-update-tab";
 import {
   LeadDetailTabs,
   type LeadDetailTabId,
@@ -28,36 +23,16 @@ type LeadDetailProps = {
 
 export function LeadDetail({ leadId }: LeadDetailProps) {
   const [activeTab, setActiveTab] = useState<LeadDetailTabId>("overview");
-  const user = useUser();
-  const { can } = usePermissions();
   const {
     lead,
     notes,
-    followups,
+    statusUpdates,
     siteVisits,
     projects,
     isLoading,
     error,
     refresh,
   } = useLead(leadId);
-
-  const handleStatusChange = async (statusId: string) => {
-    if (!user?.company_id || !lead || !can("leads", "edit")) return;
-
-    const { error: updateError } = await leadService.update(
-      user.company_id,
-      lead.id,
-      { status_id: statusId },
-    );
-
-    if (updateError) {
-      toast.error(updateError.message);
-      return;
-    }
-
-    toast.success("Status updated");
-    void refresh();
-  };
 
   if (isLoading) {
     return (
@@ -97,16 +72,19 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
         </div>
       </div>
 
-      <LeadQuickActions
-        lead={lead}
-        onStatusChange={(statusId) => void handleStatusChange(statusId)}
-        onTabChange={(tab) => setActiveTab(tab)}
-      />
+      <LeadQuickActions lead={lead} />
 
       <LeadDetailTabs activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className="rounded-xl border border-border bg-card p-4 md:p-6">
-        {activeTab === "overview" && <LeadOverviewTab lead={lead} />}
+        {activeTab === "overview" && (
+          <LeadOverviewTab
+            lead={lead}
+            projects={projects}
+            statusUpdates={statusUpdates}
+            siteVisits={siteVisits}
+          />
+        )}
         {activeTab === "notes" && (
           <LeadNotesTab
             leadId={leadId}
@@ -114,20 +92,12 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
             onAdded={() => void refresh()}
           />
         )}
-        {activeTab === "followups" && (
-          <LeadFollowupsTab
+        {activeTab === "activity-timeline" && lead && (
+          <LeadActivityTimelineTab
             leadId={leadId}
-            followups={followups}
-            onAdded={() => void refresh()}
-            onUpdated={() => void refresh()}
-          />
-        )}
-        {activeTab === "site-visits" && (
-          <LeadSiteVisitsTab
-            leadId={leadId}
-            siteVisits={siteVisits}
+            lead={lead}
+            statusUpdates={statusUpdates}
             projects={projects}
-            onAdded={() => void refresh()}
             onUpdated={() => void refresh()}
           />
         )}

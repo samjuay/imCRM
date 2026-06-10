@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { filterCompanyUsersForScope } from "@/lib/auth/lead-scope";
 import { useUser } from "@/hooks/use-user";
 import { userService } from "@/services/user.service";
 import { Button } from "@/components/ui/button";
@@ -20,11 +21,13 @@ export function LeadCreatePage() {
 
     void userService.getByCompany(user.company_id).then(({ data }) => {
       if (data) {
-        setCompanyUsers(data as CompanyUser[]);
+        setCompanyUsers(
+          filterCompanyUsersForScope(user, data as CompanyUser[], "assign"),
+        );
       }
       setIsLoading(false);
     });
-  }, [user?.company_id]);
+  }, [user]);
 
   if (isLoading) {
     return (

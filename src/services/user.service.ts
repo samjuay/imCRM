@@ -16,12 +16,15 @@ type RawCompanyUserRow = {
   team_leader: { full_name: string } | { full_name: string }[] | null;
 };
 
+type BaseUserRow = Omit<RawCompanyUserRow, "team_leader">;
+
 function mapDbUserToProfile(row: DbUser): UserProfile {
   return {
     user_id: row.id,
     auth_user_id: row.auth_user_id,
     company_id: row.company_id,
     team_id: row.team_id,
+    team_leader_id: row.team_leader_id,
     role: row.role,
     full_name: row.full_name,
     email: row.email,
@@ -49,8 +52,7 @@ export const userService = {
     const { data, error } = await supabase
       .from("users")
       .select(
-        `id, full_name, email, mobile, role, team_id, team_leader_id, status,
-         team_leader:users!users_team_leader_id_fkey(full_name)`,
+        `id, full_name, email, mobile, role, team_id, team_leader_id, status`,
       )
       .eq("company_id", companyId)
       .neq("status", "disabled")
@@ -60,15 +62,26 @@ export const userService = {
       return { data: null, error };
     }
 
-    const rows = (data ?? []) as unknown as RawCompanyUserRow[];
+    // Client-side enrichment to avoid self-referential DB relationship query
+    // which triggers "Could not find a relationship between 'users' and 'users'" schema error.
+    const baseRows = (data ?? []) as BaseUserRow[];
+    const enriched = baseRows.map((row) => ({
+      ...row,
+      team_leader: row.team_leader_id
+        ? { full_name: baseRows.find((u) => u.id === row.team_leader_id)?.full_name ?? null }
+        : null,
+    })) as RawCompanyUserRow[];
+
     return {
-      data: rows.map(mapCompanyUser),
+      data: enriched.map(mapCompanyUser),
       error: null,
     };
   },
 
   async fetchProfileByAuthUserId(authUserId: string) {
     const supabase = createClient();
+    await supabase.auth.getSession();
+
     const { data, error } = await supabase
       .from("users")
       .select(

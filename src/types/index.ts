@@ -39,6 +39,7 @@ export type {
   CreateLeadInput,
   CreateLeadNoteInput,
   CreateLeadSiteVisitInput,
+  CreateLeadStatusUpdateInput,
   FollowupStatus,
   Lead,
   LeadDetail,
@@ -47,9 +48,25 @@ export type {
   LeadListItem,
   LeadNote,
   LeadSiteVisit,
+  LeadStatusUpdate,
   PaginatedResult,
   SiteVisitStatus,
   UpdateLeadInput,
+  // Sprint 3A Activities
+  ActivityType,
+  ActivityItem,
+  ActivityFilters,
+  ActivityListParams,
+  LeadActivityContext,
+  LeadFollowupListItem,
+  LeadSiteVisitListItem,
+  LeadStatusUpdateListItem,
+  FollowupActivityItem,
+  SiteVisitActivityItem,
+  StatusChangeActivityItem,
+  LeadCreatedActivityItem,
+  LeadAssignedActivityItem,
+  BaseActivityItem,
 } from "./lead";
 
 export type NavItem = {

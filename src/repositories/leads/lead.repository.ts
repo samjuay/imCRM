@@ -3,6 +3,7 @@ import { requireCompanyId } from "@/lib/database/company-scope";
 import type {
   CreateLeadInput,
   Lead,
+  LeadActivityContext,
   LeadDetail,
   LeadFilters,
   LeadListItem,
@@ -74,8 +75,23 @@ export const leadRepository = {
     filters: LeadFilters,
     page: number,
     pageSize: number,
+    scopedAssigneeIds: string[] | null = null,
   ): Promise<{ data: PaginatedResult<LeadListItem> | null; error: Error | null }> {
     const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return {
+        data: {
+          data: [],
+          total: 0,
+          page,
+          pageSize,
+          totalPages: 1,
+        },
+        error: null,
+      };
+    }
+
     const supabase = createClient();
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -99,6 +115,8 @@ export const leadRepository = {
     }
     if (filters.assigned_user_id) {
       query = query.eq("assigned_user_id", filters.assigned_user_id);
+    } else if (scopedAssigneeIds !== null) {
+      query = query.in("assigned_user_id", scopedAssigneeIds);
     }
 
     const { data, error, count } = await query;
@@ -189,5 +207,68 @@ export const leadRepository = {
       .delete()
       .eq("company_id", scopedCompanyId)
       .eq("id", id);
+  },
+
+  // Sprint 3A (F only): bounded recent lead creations for "Lead Created" events in timeline.
+  // Returns data with 3C fields (assigned + team). Read-only, no workflow impact.
+  async listRecentCreations(
+    companyId: string,
+    since: string | null | undefined = undefined,
+    limit = 50,
+    scopedAssigneeIds: string[] | null = null,
+  ): Promise<{ data: Array<Lead & LeadActivityContext & { source_name?: string; status_name?: string }> | null; error: Error | null }> {
+    const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return { data: [], error: null };
+    }
+
+    const supabase = createClient();
+
+    let query = supabase
+      .from("leads")
+      .select(
+        `id, company_id, assigned_user_id, lead_source_id, full_name, phone, email,
+         budget, location, requirement, status_id, remarks, created_by, created_at, updated_at,
+         lead_sources(source_name),
+         lead_statuses(status_name),
+         assigned_user:users!leads_assigned_user_id_fkey(full_name, team_id, team_leader_id)`,
+        { count: "exact" }
+      )
+      .eq("company_id", scopedCompanyId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (since) {
+      query = query.gte("created_at", since);
+    }
+
+    if (scopedAssigneeIds !== null) {
+      query = query.in("assigned_user_id", scopedAssigneeIds);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error: error as Error };
+    }
+
+    const rows = (data ?? []) as any[];
+    const enriched = rows.map((row) => {
+      const src = row.lead_sources ? (Array.isArray(row.lead_sources) ? row.lead_sources[0] : row.lead_sources) : null;
+      const st = row.lead_statuses ? (Array.isArray(row.lead_statuses) ? row.lead_statuses[0] : row.lead_statuses) : null;
+      const au = row.assigned_user ? (Array.isArray(row.assigned_user) ? row.assigned_user[0] : row.assigned_user) : null;
+      return {
+        ...row,
+        source_name: src?.source_name,
+        status_name: st?.status_name,
+        assigned_user_name: au?.full_name ?? null,
+        assigned_user_id: row.assigned_user_id ?? null,
+        team_id: au?.team_id ?? null,
+        team_leader_id: au?.team_leader_id ?? null,
+      };
+    });
+
+    return { data: enriched, error: null };
   },
 };

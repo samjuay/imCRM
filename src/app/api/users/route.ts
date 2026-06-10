@@ -60,68 +60,146 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const admin = createAdminClient();
+
     const body = (await request.json()) as CreateCompanyUserInput;
 
     if (!["team_leader", "sales_executive"].includes(body.role)) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
+    let finalTeamId: string | null = body.team_id || null;
+    let createdTeamId: string | null = null;
+
+    if (!finalTeamId && body.new_team_name && body.new_team_name.trim()) {
+      const { data: createdTeam, error: teamError } = await supabase
+        .from("teams")
+        .insert({
+          team_name: body.new_team_name.trim(),
+          company_id: adminProfile.company_id,
+        })
+        .select("id")
+        .single();
+
+      if (teamError || !createdTeam) {
+        return NextResponse.json(
+          { error: teamError?.message ?? "Failed to create team" },
+          { status: 400 },
+        );
+      }
+
+      finalTeamId = createdTeam.id;
+      createdTeamId = finalTeamId;
+    }
+
     const teamLeaderId = await resolveTeamLeaderId(
       supabase,
       adminProfile.company_id,
-      body,
+      { ...body, team_id: finalTeamId },
     );
 
-    const admin = createAdminClient();
-    const tempPassword = crypto.randomUUID();
+    let createdAuthId: string | null = null;
 
-    const { data: createdAuth, error: authError } =
-      await admin.auth.admin.createUser({
-        email: body.email,
-        password: tempPassword,
-        email_confirm: true,
-      });
+    try {
+      const { data: createdAuth, error: authError } =
+        await admin.auth.admin.createUser({
+          email: body.email,
+          password: body.password,
+          email_confirm: true,
+        });
 
-    if (authError || !createdAuth.user) {
-      return NextResponse.json(
-        { error: authError?.message ?? "Failed to create auth user" },
-        { status: 400 },
-      );
+      if (authError || !createdAuth.user) {
+        if (createdTeamId) {
+          await supabase
+            .from("teams")
+            .delete()
+            .eq("id", createdTeamId)
+            .eq("company_id", adminProfile.company_id);
+        }
+        return NextResponse.json(
+          { error: authError?.message ?? "Failed to create auth user" },
+          { status: 400 },
+        );
+      }
+
+      createdAuthId = createdAuth.user.id;
+
+      const { data: createdProfile, error: profileError } = await admin
+        .from("users")
+        .insert({
+          auth_user_id: createdAuthId,
+          company_id: adminProfile.company_id,
+          team_id: finalTeamId,
+          team_leader_id: teamLeaderId,
+          role: body.role,
+          full_name: body.full_name,
+          mobile: body.mobile,
+          email: body.email,
+          status: body.status,
+        })
+        .select("id")
+        .single();
+
+      if (profileError) {
+        await admin.auth.admin.deleteUser(createdAuthId);
+        if (createdTeamId) {
+          await supabase
+            .from("teams")
+            .delete()
+            .eq("id", createdTeamId)
+            .eq("company_id", adminProfile.company_id);
+        }
+        return NextResponse.json(
+          { error: profileError.message },
+          { status: 400 },
+        );
+      }
+
+      if (body.role === "team_leader" && finalTeamId) {
+        const { error: updateError } = await admin
+          .from("teams")
+          .update({ team_leader_id: createdProfile.id })
+          .eq("id", finalTeamId)
+          .eq("company_id", adminProfile.company_id);
+
+        if (updateError) {
+          // rollback user and auth and team
+          await admin.from("users").delete().eq("id", createdProfile.id);
+          await admin.auth.admin.deleteUser(createdAuthId);
+          if (createdTeamId) {
+            await admin
+              .from("teams")
+              .delete()
+              .eq("id", createdTeamId)
+              .eq("company_id", adminProfile.company_id);
+          }
+          return NextResponse.json(
+            { error: updateError.message },
+            { status: 400 },
+          );
+        }
+      }
+
+      return NextResponse.json({ id: createdProfile.id });
+    } catch (innerError) {
+      if (createdAuthId) {
+        try {
+          await admin.auth.admin.deleteUser(createdAuthId);
+        } catch {}
+      }
+      if (createdTeamId) {
+        try {
+          await supabase
+            .from("teams")
+            .delete()
+            .eq("id", createdTeamId)
+            .eq("company_id", adminProfile.company_id);
+        } catch {}
+      }
+      const message =
+        innerError instanceof Error ? innerError.message : "Internal server error";
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    const { data: createdProfile, error: profileError } = await supabase
-      .from("users")
-      .insert({
-        auth_user_id: createdAuth.user.id,
-        company_id: adminProfile.company_id,
-        team_id: body.team_id,
-        team_leader_id: teamLeaderId,
-        role: body.role,
-        full_name: body.full_name,
-        mobile: body.mobile,
-        email: body.email,
-        status: body.status,
-      })
-      .select("id")
-      .single();
-
-    if (profileError) {
-      await admin.auth.admin.deleteUser(createdAuth.user.id);
-      return NextResponse.json(
-        { error: profileError.message },
-        { status: 400 },
-      );
-    }
-
-    if (body.role === "team_leader" && body.team_id) {
-      await supabase
-        .from("teams")
-        .update({ team_leader_id: createdProfile.id })
-        .eq("id", body.team_id)
-        .eq("company_id", adminProfile.company_id);
-    }
-
-    return NextResponse.json({ id: createdProfile.id });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Internal server error";

@@ -18,7 +18,9 @@ export const leadFormSchema = z.object({
   location: z.string().optional(),
   requirement: z.string().optional(),
   remarks: z.string().optional(),
-  assigned_user_id: z.string().optional().or(z.literal("")),
+  assigned_user_id: z.string().min(1, "Assigned To is required"),
+  // Sprint 3B: optional assignment reason (max 500 chars, enforced in UI for assignment actions)
+  assignment_reason: z.string().max(500, "Assignment reason must be 500 characters or less").optional().or(z.literal("")),
 });
 
 export type LeadFormValues = z.infer<typeof leadFormSchema>;
@@ -44,3 +46,19 @@ export const leadSiteVisitSchema = z.object({
 });
 
 export type LeadSiteVisitFormValues = z.infer<typeof leadSiteVisitSchema>;
+
+// ---------------------------------------------------------------------------
+// Status Update form (Sprint 2B - dependent stage/outcome + conditionals)
+// ---------------------------------------------------------------------------
+
+export const leadStatusUpdateSchema = z.object({
+  stage: z.string().min(1, "Stage is required"),
+  outcome: z.string().optional().or(z.literal("")),
+  remark: z.string().min(1, "Remark is required"),
+  next_followup_date: z.string().optional().or(z.literal("")),
+  project_id: z.string().optional().or(z.literal("")),
+  visit_date: z.string().optional().or(z.literal("")),
+  followup_type_id: z.string().optional().or(z.literal("")),
+});
+
+export type LeadStatusUpdateFormValues = z.infer<typeof leadStatusUpdateSchema>;

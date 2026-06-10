@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/ui.store";
-import { APP_NAME, NAV_ITEMS } from "@/utils/constants";
+import { APP_NAME, NAV_ITEMS, ROUTES } from "@/utils/constants";
 import { Button } from "@/components/ui/button";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const iconMap: Record<string, LucideIcon> = {
   home: Home,
@@ -30,6 +31,7 @@ const iconMap: Record<string, LucideIcon> = {
 export function DesktopSidebar() {
   const pathname = usePathname();
   const { isSidebarCollapsed, toggleSidebar } = useUIStore();
+  const { can } = usePermissions();
 
   return (
     <aside
@@ -68,7 +70,9 @@ export function DesktopSidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 p-3" aria-label="Sidebar navigation">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) =>
+          item.href === ROUTES.users ? can("users", "view") : true
+        ).map((item) => {
           const Icon = iconMap[item.icon] ?? Home;
           const isActive =
             item.href === "/"

@@ -1,0 +1,48 @@
+---
+pid: 4324
+cwd: "C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm"
+command: "Set-Location \"C:\\Users\\samju.IMMATION\\OneDrive\\Desktop\\imcrm\"; pnpm dev"
+started_at: 2026-06-08T11:55:50.338Z
+running_for_ms: 13440004 
+---
+$ next dev
+ ⚠ Port 3000 is in use by process 3664, using available port 3001 instead.
+   ▲ Next.js 15.5.19
+   - Local:        http://localhost:3001
+   - Network:      http://10.169.131.214:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+node:events:502
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: EPERM: operation not permitted, open 'C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm\.next\trace'
+Emitted 'error' event on WriteStream instance at:
+    at emitErrorNT (node:internal/streams/destroy:169:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:128:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'open',
+  path: 'C:\\Users\\samju.IMMATION\\OneDrive\\Desktop\\imcrm\\.next\\trace'
+}
+
+Node.js v20.20.2
+node:events:502
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: EPERM: operation not permitted, open 'C:\Users\samju.IMMATION\OneDrive\Desktop\imcrm\.next\trace'
+Emitted 'error' event on WriteStream instance at:
+    at emitErrorNT (node:internal/streams/destroy:169:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:128:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'open',
+  path: 'C:\\Users\\samju.IMMATION\\OneDrive\\Desktop\\imcrm\\.next\\trace'
+}
+
+Node.js v20.20.2
+[ELIFECYCLE] Command failed with exit code 1.

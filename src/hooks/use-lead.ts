@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { filterCompanyUsersForScope } from "@/lib/auth/lead-scope";
 import { useUser } from "@/hooks/use-user";
 import { leadService } from "@/services/leads";
 import { userService } from "@/services/user.service";
@@ -11,6 +12,7 @@ import type {
   LeadFollowup,
   LeadNote,
   LeadSiteVisit,
+  LeadStatusUpdate,
 } from "@/types/lead";
 import type { Project } from "@/types/project";
 
@@ -20,6 +22,7 @@ export function useLead(leadId: string) {
   const [notes, setNotes] = useState<LeadNote[]>([]);
   const [followups, setFollowups] = useState<LeadFollowup[]>([]);
   const [siteVisits, setSiteVisits] = useState<LeadSiteVisit[]>([]);
+  const [statusUpdates, setStatusUpdates] = useState<LeadStatusUpdate[]>([]);
   const [companyUsers, setCompanyUsers] = useState<CompanyUser[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,12 +44,13 @@ export function useLead(leadId: string) {
       setIsLoading(true);
       setError(null);
 
-      const [leadResult, notesResult, followupsResult, visitsResult] =
+      const [leadResult, notesResult, followupsResult, visitsResult, updatesResult] =
         await Promise.all([
           leadService.getById(scopedCompanyId, leadId),
           leadService.listNotes(scopedCompanyId, leadId),
           leadService.listFollowups(scopedCompanyId, leadId),
           leadService.listSiteVisits(scopedCompanyId, leadId),
+          leadService.listStatusUpdates(scopedCompanyId, leadId),
         ]);
 
       if (cancelled) return;
@@ -61,6 +65,7 @@ export function useLead(leadId: string) {
       setNotes(notesResult.data ?? []);
       setFollowups(followupsResult.data ?? []);
       setSiteVisits(visitsResult.data ?? []);
+      setStatusUpdates(updatesResult.data ?? []);
       setIsLoading(false);
     }
 
@@ -72,20 +77,26 @@ export function useLead(leadId: string) {
   }, [companyId, leadId, refreshKey]);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId || !user) return;
 
     void Promise.all([
       userService.getByCompany(companyId),
       projectService.getByCompany(companyId),
     ]).then(([usersResult, projectsResult]) => {
       if (usersResult.data) {
-        setCompanyUsers(usersResult.data as CompanyUser[]);
+        setCompanyUsers(
+          filterCompanyUsersForScope(
+            user,
+            usersResult.data as CompanyUser[],
+            "assign",
+          ),
+        );
       }
       if (projectsResult.data) {
         setProjects(projectsResult.data as Project[]);
       }
     });
-  }, [companyId]);
+  }, [companyId, user]);
 
   const refresh = () => {
     setRefreshKey((k) => k + 1);
@@ -96,6 +107,7 @@ export function useLead(leadId: string) {
     notes,
     followups,
     siteVisits,
+    statusUpdates,
     companyUsers,
     projects,
     isLoading,

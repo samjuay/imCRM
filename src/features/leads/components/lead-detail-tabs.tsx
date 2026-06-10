@@ -5,8 +5,7 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "notes", label: "Notes" },
-  { id: "followups", label: "Followups" },
-  { id: "site-visits", label: "Site Visits" },
+  { id: "activity-timeline", label: "Activity Timeline" },
 ] as const;
 
 export type LeadDetailTabId = (typeof TABS)[number]["id"];
