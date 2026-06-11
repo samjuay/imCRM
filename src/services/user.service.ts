@@ -80,7 +80,6 @@ export const userService = {
 
   async fetchProfileByAuthUserId(authUserId: string) {
     const supabase = createClient();
-    await supabase.auth.getSession();
 
     const { data, error } = await supabase
       .from("users")
