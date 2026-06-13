@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ChevronRight, Phone } from "lucide-react";
+import { motion } from "framer-motion";
 import { LeadPhoneLink } from "@/features/leads/components/lead-phone-link";
 import { LeadStatusBadge } from "@/features/leads/components/lead-status-badge";
 import { prefetchLead } from "@/hooks/use-lead";
@@ -36,19 +37,29 @@ export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: Leads
   return (
     <div className="space-y-3 md:hidden">
       {leads.map((lead) => (
-        <div
+        <motion.div
           key={lead.id}
           role="button"
           tabIndex={0}
-          onClick={() => router.push(`/leads/${lead.id}`)}
-          onTouchStart={() => handlePrefetch(lead.id)}
-          onPointerDown={() => handlePrefetch(lead.id)}
+          onClick={() => {
+            console.log('[CARD] CLICK', lead.id);
+            router.push(`/leads/${lead.id}`);
+          }}
+          onMouseEnter={() => {
+            if (companyId) {
+              console.log('[CARD] MOUSE_ENTER_PREFETCH', lead.id);
+              handlePrefetch(lead.id);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
+              console.log('[CARD] KEYDOWN', lead.id);
               router.push(`/leads/${lead.id}`);
             }
           }}
+          whileHover={{ y: -2, transition: { duration: 0.12 } }}
+          whileTap={{ scale: 0.99, transition: { duration: 0.1 } }}
           className="flex cursor-pointer items-center justify-between rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/30"
         >
           {onToggleSelect && (
@@ -84,7 +95,7 @@ export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: Leads
             </div>
           </div>
           <ChevronRight className="ml-2 size-5 shrink-0 text-muted-foreground" />
-        </div>
+        </motion.div>
       ))}
     </div>
   );

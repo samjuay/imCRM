@@ -47,9 +47,9 @@ export function BottomNavigation() {
         <ul className="flex h-full items-stretch justify-around px-1">
           {Array.from({ length: 5 }).map((_, i) => (
             <li key={i} className="flex flex-1">
-              <div className="flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium">
-                <div className="h-5 w-5 animate-pulse bg-muted rounded" />
-                <div className="h-3 w-12 animate-pulse bg-muted rounded" />
+              <div className="flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium animate-pulse">
+                <div className="h-5 w-5 bg-muted rounded" />
+                <div className="h-3 w-12 bg-muted rounded" />
               </div>
             </li>
           ))}

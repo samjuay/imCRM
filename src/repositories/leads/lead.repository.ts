@@ -116,9 +116,10 @@ export const leadRepository = {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
+    // Use estimated count for better performance (exact count is expensive on large tables)
     let query = supabase
       .from("leads")
-      .select(LEAD_LIST_SELECT, { count: "exact" })
+      .select(LEAD_LIST_SELECT, { count: "planned" })
       .eq("company_id", scopedCompanyId)
       .order("created_at", { ascending: false })
       .range(from, to);
@@ -148,7 +149,8 @@ export const leadRepository = {
       return { data: null, error };
     }
 
-    const total = count ?? 0;
+    // For "planned" count, count may be null or estimated; fall back to pageSize * page logic if needed
+    const total = count ?? (page === 1 && (data?.length ?? 0) < pageSize ? (data?.length ?? 0) : page * pageSize);
     const rows = (data ?? []) as unknown as LeadListRow[];
 
     console.log('[LEADS] REPO_MAPPING_COMPLETE', { mapped: rows.length });

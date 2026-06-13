@@ -47,10 +47,20 @@ export function SettingsGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading || permissionLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-32 w-full" />
+      <div className="space-y-6 animate-pulse">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-8 w-48" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Skeleton className="h-32 w-full rounded-xl border" />
+          <Skeleton className="h-32 w-full rounded-xl border" />
+          <Skeleton className="h-32 w-full rounded-xl border" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Skeleton className="h-32 w-full rounded-xl border" />
+          <Skeleton className="h-32 w-full rounded-xl border" />
+          <Skeleton className="h-32 w-full rounded-xl border" />
+        </div>
       </div>
     );
   }

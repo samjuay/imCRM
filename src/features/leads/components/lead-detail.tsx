@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLead } from "@/hooks/use-lead";
@@ -22,6 +22,7 @@ type LeadDetailProps = {
 };
 
 export function LeadDetail({ leadId }: LeadDetailProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<LeadDetailTabId>("overview");
   const {
     lead,
@@ -65,10 +66,38 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
 
   if (isInitialLoad) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-48 w-full" />
+      <div className="space-y-6 animate-pulse">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-8 w-8 rounded-md" />
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Skeleton className="h-20 w-full rounded-lg" />
+          <Skeleton className="h-20 w-full rounded-lg" />
+          <Skeleton className="h-20 w-full rounded-lg" />
+          <Skeleton className="h-20 w-full rounded-lg" />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-8 w-24 rounded-md" />
+          <Skeleton className="h-8 w-24 rounded-md" />
+          <Skeleton className="h-8 w-24 rounded-md" />
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4 md:p-6 space-y-4">
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-20 rounded" />
+            <Skeleton className="h-8 w-20 rounded" />
+            <Skeleton className="h-8 w-20 rounded" />
+          </div>
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+        </div>
       </div>
     );
   }
@@ -85,10 +114,8 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Button asChild variant="ghost" size="icon">
-          <Link href="/leads">
-            <ArrowLeft className="size-4" />
-          </Link>
+        <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <ArrowLeft className="size-4" />
         </Button>
         <div>
           <h1 className="text-xl font-bold text-primary md:text-2xl">

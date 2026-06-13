@@ -61,10 +61,17 @@ export function DesktopSidebar() {
           )}
         </div>
         <nav className="flex-1 space-y-1 p-3" aria-label="Sidebar navigation">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-10 animate-pulse bg-white/5 rounded-lg" />
-          ))}
+          <div className="space-y-1.5 animate-pulse">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-10 px-3 rounded-lg bg-white/5" />
+            ))}
+          </div>
         </nav>
+        <div className="border-t border-white/10 p-4">
+          {!isSidebarCollapsed && (
+            <div className="h-3 w-24 bg-white/5 rounded animate-pulse" />
+          )}
+        </div>
       </aside>
     );
   }
