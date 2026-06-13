@@ -5,6 +5,7 @@ import type {
   Lead,
   LeadActivityContext,
   LeadDetail,
+  LeadDetailBundle,
   LeadFilters,
   LeadListItem,
   PaginatedResult,
@@ -70,6 +71,23 @@ function mapDetailRow(row: LeadDetailRow): LeadDetail {
 }
 
 export const leadRepository = {
+  async getDetailBundle(id: string) {
+    const startedAt = performance.now();
+    const supabase = createClient();
+    const { data, error } = await supabase.rpc("get_lead_detail_bundle", {
+      p_lead_id: id,
+    });
+    const duration = performance.now() - startedAt;
+    console.log(
+      `[PERF] LEAD_DETAIL_RPC_${id}: ${duration.toFixed(2)}ms (${error ? "error" : "completed"})`,
+    );
+
+    return {
+      data: data as LeadDetailBundle | null,
+      error,
+    };
+  },
+
   async list(
     companyId: string,
     filters: LeadFilters,
@@ -77,9 +95,11 @@ export const leadRepository = {
     pageSize: number,
     scopedAssigneeIds: string[] | null = null,
   ): Promise<{ data: PaginatedResult<LeadListItem> | null; error: Error | null }> {
+    console.log('[LEADS] REPO_QUERY_START', { companyId, page, pageSize, scopedAssigneeIds: scopedAssigneeIds?.length ?? null });
     const scopedCompanyId = requireCompanyId(companyId);
 
     if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      console.log('[LEADS] REPO_QUERY_COMPLETE - empty (no assignees)');
       return {
         data: {
           data: [],
@@ -119,15 +139,19 @@ export const leadRepository = {
       query = query.in("assigned_user_id", scopedAssigneeIds);
     }
 
+    console.log('[LEADS] REPO_QUERY_EXECUTING');
     const { data, error, count } = await query;
+    console.log('[LEADS] REPO_QUERY_COMPLETE', { error: !!error, count: count ?? 0, rows: data?.length ?? 0 });
 
     if (error) {
+      console.error('[LEADS] REPO_QUERY_ERROR', error);
       return { data: null, error };
     }
 
     const total = count ?? 0;
     const rows = (data ?? []) as unknown as LeadListRow[];
 
+    console.log('[LEADS] REPO_MAPPING_COMPLETE', { mapped: rows.length });
     return {
       data: {
         data: rows.map(mapListRow),

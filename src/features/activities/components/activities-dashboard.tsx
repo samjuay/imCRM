@@ -106,6 +106,7 @@ export function ActivitiesDashboard({
   const visibleTimeline = showAllTimeline ? recentTimeline : recentTimeline.slice(0, 12);
 
   if (isLoading) {
+    console.log('[SKELETON_RENDER] ActivitiesDashboard', { source: 'useActivities.isLoading', isLoading });
     return (
       <div className="space-y-4">
         <div className="h-8 w-48 animate-pulse bg-muted rounded" />

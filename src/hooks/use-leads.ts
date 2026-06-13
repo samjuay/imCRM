@@ -38,26 +38,47 @@ export function useLeads(initialFilters: LeadFilters = {}) {
     const scopedCompanyId = companyId;
 
     async function loadLeads() {
-      setIsLoading(true);
-      setError(null);
+      const startedAt = performance.now();
+      let outcome = "failed";
+      console.log('[LEADS] LOAD_START', { filters, page, companyId });
+      try {
+        setIsLoading(true);
+        setError(null);
 
-      const { data, error: fetchError } = await leadService.list(
-        scopedCompanyId,
-        filters,
-        page,
-        PAGE_SIZE,
-      );
+        const { data, error: fetchError } = await leadService.list(
+          scopedCompanyId,
+          filters,
+          page,
+          PAGE_SIZE,
+        );
 
-      if (cancelled) return;
+        outcome = cancelled ? "cancelled" : "completed";
+        console.log('[LEADS] QUERY_COMPLETE');
 
-      if (fetchError || !data) {
-        setError(fetchError?.message ?? "Failed to load leads");
+        if (cancelled) {
+          console.log('[LEADS] LOAD_CANCELLED');
+          return;
+        }
+
+        if (fetchError || !data) {
+          outcome = "error";
+          console.error('[LEADS] LOAD_ERROR', fetchError);
+          setError(fetchError?.message ?? "Failed to load leads");
+          setIsLoading(false);
+          return;
+        }
+
+        console.log('[LEADS] LOAD_SUCCESS', { count: data.data?.length ?? 0, total: data.total });
+        setResult(data);
         setIsLoading(false);
-        return;
+        console.log('[LEADS] LOAD_COMPLETE');
+      } finally {
+        const duration = performance.now() - startedAt;
+        console.log(
+          `[LEADS] LEADS_LIST_FETCH_${companyId}: ${duration.toFixed(2)}ms (${outcome})`,
+          { filters, page },
+        );
       }
-
-      setResult(data);
-      setIsLoading(false);
     }
 
     void loadLeads();

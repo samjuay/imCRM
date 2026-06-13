@@ -11,6 +11,7 @@ import { ROUTES } from "@/utils/constants";
 import { authService } from "@/services/auth.service";
 import { sessionService } from "@/services/session.service";
 import { userService } from "@/services/user.service";
+import { loadMasterDataForUser } from "@/lib/master-data/loader";
 import type { SignInResult, UserProfile } from "@/types/auth";
 
 type AuthState = {
@@ -35,28 +36,44 @@ async function loadProfileForCurrentUser(): Promise<{
   shouldSignOut: boolean;
   signOutReason?: string;
 }> {
+  console.log('[AUTH] PROFILE_START - about to call getUser()');
+  console.log('[AUTH] BEFORE getUser()');
   const authUser = await authService.getUser();
+  console.log('[AUTH] AFTER getUser()');
+  console.log('[AUTH] getUser() returned:', authUser ? 'user' : 'null');
+  if (!authUser) {
+    console.log('[AUTH] loadProfileForCurrentUser - getUser returned null, checking session');
+    const { data: { session } } = await authService.getSession();
+    console.log('[AUTH] loadProfileForCurrentUser - session check:', session ? 'exists' : 'null');
+  }
 
   if (!authUser) {
+    console.log('[AUTH] PROFILE_COMPLETE - no auth user');
     return { profile: null, shouldSignOut: false };
   }
 
+  console.log('[AUTH] BEFORE fetchProfileByAuthUserId()');
   const { profile, error } = await userService.fetchProfileByAuthUserId(
     authUser.id,
   );
+  console.log('[AUTH] AFTER fetchProfileByAuthUserId()');
+  console.log('[AUTH] fetchProfileByAuthUserId returned:', { profile: !!profile, error: !!error });
 
   if (error) {
     if (isNetworkError(error)) {
       throw error;
     }
+    console.log('[AUTH] PROFILE_COMPLETE - error (non-network)');
     return { profile: null, shouldSignOut: false };
   }
 
   if (!profile) {
+    console.log('[AUTH] PROFILE_COMPLETE - no profile');
     return { profile: null, shouldSignOut: false };
   }
 
   if (isUserDisabled(profile)) {
+    console.log('[AUTH] PROFILE_COMPLETE - user disabled');
     return {
       profile: null,
       shouldSignOut: true,
@@ -64,6 +81,7 @@ async function loadProfileForCurrentUser(): Promise<{
     };
   }
 
+  console.log('[AUTH] PROFILE_COMPLETE - success');
   return { profile, shouldSignOut: false };
 }
 
@@ -75,12 +93,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   initialize: async () => {
-    if (get().isLoading) {
-      return;
-    }
+    console.log('[AUTH] AUTH_START initialize()');
     set({ isLoading: true });
 
     try {
+      console.log('[AUTH] initialize() - checking session with getSession()');
+      const { data: { session }, error: sessionError } = await authService.getSession();
+
+      if (sessionError || !session) {
+        console.log('[AUTH] initialize() - no session, marking unauthenticated');
+        set({
+          isLoading: false,
+          isAuthenticated: false,
+          profile: null,
+        });
+        return;
+      }
+
+      console.log('[AUTH] initialize() - session found, loading profile');
       const { profile, shouldSignOut } = await loadProfileForCurrentUser();
 
       if (shouldSignOut) {
@@ -90,41 +120,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isAuthenticated: false,
           profile: null,
         });
+        console.log('[AUTH] AUTH_COMPLETE - signout');
         return;
       }
 
-      const authUser = await authService.getUser();
-
       set({
         isLoading: false,
-        isAuthenticated: authUser !== null,
+        isAuthenticated: true,
         profile,
       });
-    } catch {
+      console.log('[AUTH] AUTH_COMPLETE - success, isAuthenticated: true');
+      if (profile) await loadMasterDataForUser(profile);
+    } catch (e) {
+      console.log('[AUTH] initialize() - error:', e);
       set({
         isLoading: false,
         isAuthenticated: false,
         profile: null,
       });
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   refreshProfile: async () => {
+    console.log('[AUTH] refreshProfile START');
     try {
       const { profile, shouldSignOut } = await loadProfileForCurrentUser();
 
       if (shouldSignOut) {
+        console.log('[AUTH] refreshProfile shouldSignOut');
         await get().signOut();
+        console.log('[AUTH] refreshProfile COMPLETE (signout)');
         return;
       }
 
-      const authUser = await authService.getUser();
-
       set({
-        isAuthenticated: authUser !== null,
+        isAuthenticated: true,
         profile,
       });
-    } catch {
+      console.log('[AUTH] refreshProfile COMPLETE - profile loaded');
+      if (profile) await loadMasterDataForUser(profile);
+    } catch (e) {
+      console.log('[AUTH] refreshProfile ERROR:', e);
       set({
         isAuthenticated: false,
         profile: null,
@@ -206,6 +244,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       profile,
       isLoading: false,
     });
+
+    if (profile) await loadMasterDataForUser(profile);
 
     return {
       success: true,

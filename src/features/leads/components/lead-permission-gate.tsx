@@ -26,6 +26,7 @@ export function LeadPermissionGate({
   const { can, isLoading } = usePermissions();
 
   if (isLoading) {
+    console.log('[SKELETON_RENDER] LeadPermissionGate', { source: 'permissions.isLoading', isLoading, action });
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-48" />

@@ -4,6 +4,7 @@ export const PERMISSION_MODULES = [
   "dashboard",
   "projects",
   "leads",
+  "lead_sources",
   "followups",
   "site_visits",
   "reports",
@@ -11,6 +12,7 @@ export const PERMISSION_MODULES = [
   "teams",
   "master_data",
   "permissions",
+  "settings",
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];

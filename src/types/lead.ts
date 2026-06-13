@@ -206,6 +206,14 @@ export type LeadStatusUpdate = {
   assigned_by_user_name?: string | null;
 };
 
+export type LeadDetailBundle = {
+  lead: LeadDetail;
+  notes: LeadNote[];
+  followups: LeadFollowup[];
+  siteVisits: LeadSiteVisit[];
+  statusUpdates: LeadStatusUpdate[];
+};
+
 export type CreateLeadStatusUpdateInput = {
   lead_id: string;
   previous_status?: string | null;

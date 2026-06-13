@@ -99,28 +99,47 @@ async function assertLeadViewAccess(
 }
 
 export const leadService = {
+  async getDetailBundle(id: string) {
+    const result = await leadRepository.getDetailBundle(id);
+    if (result.error || !result.data?.lead) {
+      return {
+        data: null,
+        error: result.error ?? new Error("Lead not found"),
+      };
+    }
+    return result;
+  },
+
   async list(
     companyId: string,
     filters: LeadFilters = {},
     page = 1,
     pageSize = DEFAULT_PAGE_SIZE,
   ) {
+    console.log('[LEADS] QUERY_START', { companyId, filters, page, pageSize });
     const scope = await resolveLeadScope(companyId);
     if (!scope) {
+      console.log('[LEADS] QUERY_ERROR - no scope');
       return { data: null, error: new Error("Not authenticated") };
     }
 
     if (!isAssigneeFilterAllowed(scope, filters.assigned_user_id)) {
+      console.log('[LEADS] QUERY_COMPLETE - empty (not allowed)');
       return emptyPaginatedResult<LeadListItem>(page, pageSize);
     }
 
-    return leadRepository.list(
+    const result = await leadRepository.list(
       companyId,
       filters,
       page,
       pageSize,
       scope.visibleAssigneeIds,
     );
+    console.log('[LEADS] QUERY_COMPLETE', { error: !!result.error, count: result.data?.data?.length ?? 0, total: result.data?.total });
+    if (result.error) {
+      console.error('[LEADS] QUERY_ERROR', result.error);
+    }
+    return result;
   },
 
   async getById(companyId: string, id: string) {

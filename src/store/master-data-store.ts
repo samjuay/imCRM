@@ -14,7 +14,7 @@ type MasterDataState = {
   followupTypes: FollowupType[];
   isLoading: boolean;
   loadedCompanyId: string | null;
-  loadByCompany: (companyId: string) => Promise<void>;
+  loadByCompany: (companyId: string, includeArchived?: boolean) => Promise<void>;
   reset: () => void;
 };
 
@@ -33,21 +33,24 @@ export const useMasterDataStore = create<MasterDataState>((set, get) => ({
     set(initialState);
   },
 
-  loadByCompany: async (companyId) => {
-    if (get().loadedCompanyId === companyId) {
+  loadByCompany: async (companyId, includeArchived = false) => {
+    if (get().loadedCompanyId === companyId && !includeArchived) {
+      console.log('[AUTH] loadByCompany skipped - already loaded');
       return;
     }
 
+    console.log('[AUTH] MASTER_DATA loadByCompany START');
     set({ isLoading: true });
 
     const [sourcesResult, statusesResult, typesResult] = await Promise.all([
-      leadSourceService.getByCompany(companyId),
+      leadSourceService.getByCompany(companyId, includeArchived),
       leadStatusService.getByCompany(companyId),
       followupTypeService.getByCompany(companyId),
     ]);
 
     if (sourcesResult.error || statusesResult.error || typesResult.error) {
       set({ isLoading: false });
+      console.log('[AUTH] MASTER_DATA loadByCompany ERROR');
       return;
     }
 
@@ -58,5 +61,6 @@ export const useMasterDataStore = create<MasterDataState>((set, get) => ({
       isLoading: false,
       loadedCompanyId: companyId,
     });
+    console.log('[AUTH] MASTER_DATA loadByCompany COMPLETE');
   },
 }));

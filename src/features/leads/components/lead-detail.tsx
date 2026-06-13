@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLead } from "@/hooks/use-lead";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,9 +32,38 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
     isLoading,
     error,
     refresh,
-  } = useLead(leadId);
+  } = useLead(leadId, { loadCompanyUsers: false });
 
-  if (isLoading) {
+  const leadOpenTotalRef = useRef<{ leadId: string; startedAt: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    leadOpenTotalRef.current = { leadId, startedAt: performance.now() };
+    console.log('[PERF] LeadDetail mounted, starting timing');
+
+    return () => {
+      if (leadOpenTotalRef.current?.leadId === leadId) {
+        leadOpenTotalRef.current = null;
+      }
+    };
+  }, [leadId]);
+
+  useEffect(() => {
+    const timing = leadOpenTotalRef.current;
+    if (!isLoading && lead?.id === leadId && timing?.leadId === leadId) {
+      const total = performance.now() - timing.startedAt;
+      console.log(
+        `[PERF] LEAD_OPEN_TOTAL_${leadId}: ${total.toFixed(2)}ms (rendered)`,
+      );
+      leadOpenTotalRef.current = null;
+    }
+  }, [isLoading, lead, leadId]);
+
+  // Show cached lead summary immediately while loading full details
+  const isInitialLoad = isLoading && !lead;
+
+  if (isInitialLoad) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-48" />

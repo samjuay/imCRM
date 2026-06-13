@@ -10,32 +10,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reset = useAuthStore((state) => state.reset);
 
   useEffect(() => {
-    // Bootstrap initialize() immediately on mount. Guarantees isLoading=false and
-    // profile (or null) is resolved so AuthGuard can decide (render or redirect to
-    // unauthorized/login) instead of infinite skeleton when INITIAL_SESSION event
-    // is missed due to subscribe timing.
+    console.log('[AUTH] AuthProvider useEffect mounted');
+
+    // Bootstrap initialization on mount
     initialize();
 
     const {
       data: { subscription },
-    } = authService.onAuthStateChange(async (event) => {
+    } = authService.onAuthStateChange(async (event: "SIGNED_IN" | "SIGNED_OUT" | "TOKEN_REFRESHED" | "INITIAL_SESSION" | "USER_UPDATED" | "PASSWORD_RECOVERY" | "MFA_CHALLENGE_VERIFIED") => {
+      console.log('[AUTH] onAuthStateChange event:', event);
+
       if (event === "SIGNED_OUT") {
         reset();
         return;
       }
 
-      if (
-        event === "INITIAL_SESSION" ||
-        event === "SIGNED_IN" ||
-        event === "TOKEN_REFRESHED"
-      ) {
-        if (event === "INITIAL_SESSION") {
-          await initialize();
-          return;
-        }
-
+      // Only TOKEN_REFRESHED triggers profile refresh
+      if (event === "TOKEN_REFRESHED") {
+        console.log('[AUTH] TOKEN_REFRESHED received, calling refreshProfile()');
         await refreshProfile();
       }
+
+      // INITIAL_SESSION and SIGNED_IN are handled by mount-time initialize()
     });
 
     return () => {

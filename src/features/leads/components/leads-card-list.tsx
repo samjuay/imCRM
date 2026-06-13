@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, Phone } from "lucide-react";
 import { LeadPhoneLink } from "@/features/leads/components/lead-phone-link";
 import { LeadStatusBadge } from "@/features/leads/components/lead-status-badge";
+import { prefetchLead } from "@/hooks/use-lead";
+import { useUser } from "@/hooks/use-user";
 import type { LeadListItem } from "@/types/lead";
 
 function formatDate(date: string) {
@@ -22,6 +24,14 @@ type LeadsCardListProps = {
 
 export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: LeadsCardListProps) {
   const router = useRouter();
+  const user = useUser();
+  const companyId = user?.company_id;
+
+  const handlePrefetch = (leadId: string) => {
+    if (companyId) {
+      void prefetchLead(leadId, companyId);
+    }
+  };
 
   return (
     <div className="space-y-3 md:hidden">
@@ -31,6 +41,8 @@ export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: Leads
           role="button"
           tabIndex={0}
           onClick={() => router.push(`/leads/${lead.id}`)}
+          onTouchStart={() => handlePrefetch(lead.id)}
+          onPointerDown={() => handlePrefetch(lead.id)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();

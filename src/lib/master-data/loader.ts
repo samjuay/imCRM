@@ -3,6 +3,7 @@ import { usePermissionStore } from "@/store/permission-store";
 import type { UserProfile } from "@/types/auth";
 
 export async function loadMasterDataForUser(profile: UserProfile) {
+  console.log('[AUTH] MASTER_DATA_START');
   const { loadByCompany } = useMasterDataStore.getState();
   const { loadByRole } = usePermissionStore.getState();
 
@@ -10,6 +11,7 @@ export async function loadMasterDataForUser(profile: UserProfile) {
     loadByCompany(profile.company_id),
     loadByRole(profile.role),
   ]);
+  console.log('[AUTH] MASTER_DATA_COMPLETE');
 }
 
 export function resetMasterDataStores() {

@@ -49,26 +49,42 @@ export const usePermissionStore = create<PermissionState>((set, get) => ({
 
   loadByRole: async (role) => {
     if (get().loadedRole === role) {
+      console.log('[AUTH] loadByRole skipped - already loaded');
       return;
     }
 
+    console.log('[PERMISSION] role requested:', role);
+    console.log('[AUTH] PERMISSIONS loadByRole START');
     set({ isLoading: true });
 
     const { data, error } = await permissionService.getByRole(role);
 
     if (error) {
       set({ isLoading: false });
+      console.log('[AUTH] PERMISSIONS loadByRole ERROR');
       return;
     }
+
+    console.log("[PERMISSION] rows returned:", data);
+    console.log("[PERMISSION] row count:", data?.length);
 
     set({
       permissions: (data ?? []) as RolePermission[],
       isLoading: false,
       loadedRole: role,
     });
+    console.log('[AUTH] PERMISSIONS loadByRole COMPLETE');
   },
 
   can: (module, action) => {
+    console.log(
+      "[PERMISSION] can check",
+      {
+        module,
+        action,
+        permissions: get().permissions
+      }
+    );
     const permission = get().permissions.find((p) => p.module_name === module);
     if (!permission) {
       return false;
