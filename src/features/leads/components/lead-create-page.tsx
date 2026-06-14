@@ -16,8 +16,6 @@ export function LeadCreatePage() {
   const [companyUsers, setCompanyUsers] = useState<CompanyUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const isSalesExecutive = user?.role === "sales_executive";
-
   useEffect(() => {
     if (!user?.company_id) return;
 
@@ -40,9 +38,6 @@ export function LeadCreatePage() {
     );
   }
 
-  // For Sales Executive, auto-assign to self; pass user_id as default
-  const defaultAssignedUserId = isSalesExecutive ? user?.user_id : undefined;
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -62,12 +57,7 @@ export function LeadCreatePage() {
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4 md:p-6">
-        <LeadForm
-          mode="create"
-          companyUsers={companyUsers}
-          currentUser={user}
-          defaultAssignedUserId={defaultAssignedUserId}
-        />
+        <LeadForm mode="create" companyUsers={companyUsers} />
       </div>
     </div>
   );

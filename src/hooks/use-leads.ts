@@ -91,7 +91,7 @@ export function useLeads(initialFilters: LeadFilters = {}) {
     if (newFilters.assigned_user_id) params.set("assigned_user_id", newFilters.assigned_user_id);
     if (newPage > 1) params.set("page", String(newPage));
     const url = params.toString() ? `${pathname}?${params.toString()}` : pathname;
-    router.replace(url, { scroll: false });
+    router.push(url, { scroll: false });
   }, [router, pathname]);
 
   // Load leads with caching

@@ -1,122 +1,98 @@
 "use client";
 
-import { useState } from "react";
+import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { LeadEmptyState } from "@/features/leads/components/lead-empty-state";
-import { ActivitiesFilters } from "@/features/activities/components/activities-filters";
-import { ActivityTimelineItem } from "@/features/activities/components/activity-timeline-item";
 import type {
-  ActivityItem,
+  ActivityCardId,
+  ActivityCounts,
   CompanyUser,
-  FollowupActivityItem,
-  SiteVisitActivityItem,
-} from "@/types/lead";
+} from "@/types";
+
+const CARDS: {
+  id: ActivityCardId;
+  title: string;
+  description: string;
+  countKey: keyof ActivityCounts;
+  variant: "destructive" | "default" | "outline";
+}[] = [
+  {
+    id: "overdue-followups",
+    title: "Overdue Followups",
+    description: "Immediate action required",
+    countKey: "overdueFollowups",
+    variant: "destructive",
+  },
+  {
+    id: "followups-today",
+    title: "Followup Due Today",
+    description: "Needs attention today",
+    countKey: "followupsToday",
+    variant: "default",
+  },
+  {
+    id: "leads-without-followup",
+    title: "Leads Without Next Action",
+    description: "Assign next action",
+    countKey: "leadsWithoutFollowup",
+    variant: "outline",
+  },
+  {
+    id: "site-visits-today",
+    title: "Site Visits Today",
+    description: "Scheduled for today",
+    countKey: "siteVisitsToday",
+    variant: "default",
+  },
+  {
+    id: "upcoming-followups",
+    title: "Upcoming Followups",
+    description: "Next 7 days",
+    countKey: "upcomingFollowups",
+    variant: "outline",
+  },
+  {
+    id: "upcoming-site-visits",
+    title: "Upcoming Site Visits",
+    description: "Next 7 days",
+    countKey: "upcomingSiteVisits",
+    variant: "outline",
+  },
+];
 
 type ActivitiesDashboardProps = {
-  followupsDueToday: FollowupActivityItem[];
-  overdueFollowups: FollowupActivityItem[];
-  siteVisitsToday: SiteVisitActivityItem[];
-  upcomingFollowups: FollowupActivityItem[];
-  upcomingSiteVisits: SiteVisitActivityItem[];
-  recentTimeline: ActivityItem[];
+  counts: ActivityCounts;
   companyUsers: CompanyUser[];
-  filters: any;
-  onFiltersChange: (f: any) => void;
+  onCardTap: (cardId: ActivityCardId) => void;
   onRefresh: () => void;
   isLoading: boolean;
-  counts: Record<string, number>;
 };
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function FollowupCard({ item }: { item: FollowupActivityItem }) {
-  const router = useRouter();
+function DashboardSkeleton() {
   return (
-    <div
-      className="rounded-lg border border-border bg-card p-3 cursor-pointer hover:bg-muted/30"
-      onClick={() => router.push(`/leads/${item.lead_id}`)}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-primary">{item.lead_full_name ?? "Lead"}</p>
-          <p className="text-xs text-muted-foreground">{item.followup_type_name}</p>
-        </div>
-        <Badge variant="outline" className="shrink-0">{item.status}</Badge>
+    <div className="space-y-4">
+      <div className="h-8 w-48 animate-pulse bg-muted rounded" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-28 rounded-xl border bg-card animate-pulse" />
+        ))}
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">{formatDateTime(item.followup_date)}</p>
-      {item.remarks && <p className="mt-1 text-xs line-clamp-2">{item.remarks}</p>}
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        {item.assigned_user_name ?? "Unassigned"}
-      </p>
-    </div>
-  );
-}
-
-function SiteVisitCard({ item }: { item: SiteVisitActivityItem }) {
-  const router = useRouter();
-  const isDone = item.type === "site_visit_completed";
-  return (
-    <div
-      className="rounded-lg border border-border bg-card p-3 cursor-pointer hover:bg-muted/30"
-      onClick={() => router.push(`/leads/${item.lead_id}`)}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-primary">{item.lead_full_name ?? "Lead"}</p>
-          <p className="text-xs text-muted-foreground">{item.project_name ?? "No project"}</p>
-        </div>
-        <Badge variant={isDone ? "default" : "outline"} className="shrink-0">
-          {item.visit_status}
-        </Badge>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">{formatDateTime(item.visit_date)}</p>
-      {item.remarks && <p className="mt-1 text-xs line-clamp-2">{item.remarks}</p>}
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        {item.assigned_user_name ?? "Unassigned"}
-      </p>
     </div>
   );
 }
 
 export function ActivitiesDashboard({
-  followupsDueToday,
-  overdueFollowups,
-  siteVisitsToday,
-  upcomingFollowups,
-  upcomingSiteVisits,
-  recentTimeline,
+  counts,
   companyUsers,
-  filters,
-  onFiltersChange,
+  onCardTap,
   onRefresh,
   isLoading,
-  counts,
 }: ActivitiesDashboardProps) {
-  const [showAllTimeline, setShowAllTimeline] = useState(false);
-  const visibleTimeline = showAllTimeline ? recentTimeline : recentTimeline.slice(0, 12);
+  const router = useRouter();
 
   if (isLoading) {
-    console.log('[SKELETON_RENDER] ActivitiesDashboard', { source: 'useActivities.isLoading', isLoading });
-    return (
-      <div className="space-y-4">
-        <div className="h-8 w-48 animate-pulse bg-muted rounded" />
-        <div className="grid gap-3 sm:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-24 rounded-xl border bg-card animate-pulse" />
-          ))}
-        </div>
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   return (
@@ -124,138 +100,48 @@ export function ActivitiesDashboard({
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-primary">Activities</h1>
-          <p className="text-sm text-muted-foreground">What do I need to do today?</p>
+          <p className="text-sm text-muted-foreground">
+            What do I need to do today?
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh}>
           Refresh
         </Button>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <ActivitiesFilters
-          filters={filters}
-          companyUsers={companyUsers}
-          onChange={onFiltersChange}
-        />
-      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {CARDS.map((card) => {
+          const count = counts[card.countKey];
+          const isZero = count === 0;
 
-      {/* A. Followups Due Today */}
-      <section>
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-lg font-semibold">Followups Due Today</h2>
-          <Badge variant="gold">{counts.dueToday}</Badge>
-        </div>
-        {followupsDueToday.length === 0 ? (
-          <LeadEmptyState title="No followups due today" description="Great — nothing scheduled for today." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {followupsDueToday.map((item) => (
-              <FollowupCard key={item.id} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* B. Overdue Followups */}
-      <section>
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-destructive">Overdue Followups</h2>
-          <Badge variant="destructive">{counts.overdue}</Badge>
-        </div>
-        {overdueFollowups.length === 0 ? (
-          <LeadEmptyState title="No overdue followups" description="All caught up." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {overdueFollowups.map((item) => (
-              <FollowupCard key={item.id} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* C. Site Visits Today */}
-      <section>
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-lg font-semibold">Site Visits Today</h2>
-          <Badge variant="gold">{counts.visitsToday}</Badge>
-        </div>
-        {siteVisitsToday.length === 0 ? (
-          <LeadEmptyState title="No site visits today" description="No visits scheduled for today." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {siteVisitsToday.map((item) => (
-              <SiteVisitCard key={item.id} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* D + E Upcoming (lower priority) */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <section>
-          <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-base font-semibold">Upcoming Followups</h2>
-            <Badge variant="outline">{counts.upcomingFollowups}</Badge>
-          </div>
-          {upcomingFollowups.length === 0 ? (
-            <LeadEmptyState title="No upcoming followups" description="" />
-          ) : (
-            <div className="space-y-2">
-              {upcomingFollowups.slice(0, 6).map((item) => (
-                <FollowupCard key={item.id} item={item} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-base font-semibold">Upcoming Site Visits</h2>
-            <Badge variant="outline">{counts.upcomingSiteVisits}</Badge>
-          </div>
-          {upcomingSiteVisits.length === 0 ? (
-            <LeadEmptyState title="No upcoming site visits" description="" />
-          ) : (
-            <div className="space-y-2">
-              {upcomingSiteVisits.slice(0, 6).map((item) => (
-                <SiteVisitCard key={item.id} item={item} />
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-
-      {/* F. Recent Activity Timeline */}
-      <section>
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Recent Activity Timeline</h2>
-            <Badge variant="outline">{counts.timeline}</Badge>
-          </div>
-          {recentTimeline.length > 12 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowAllTimeline(!showAllTimeline)}
+          return (
+            <motion.div
+              key={card.id}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.98 }}
+              transition={{ duration: 0.12 }}
+              onClick={() => onCardTap(card.id)}
+              className={`
+                rounded-xl border border-border bg-card p-4 cursor-pointer
+                transition-colors hover:bg-muted/30
+                ${isZero ? "opacity-50" : ""}
+              `}
             >
-              {showAllTimeline ? "Show less" : "Show all"}
-            </Button>
-          )}
-        </div>
-
-        {recentTimeline.length === 0 ? (
-          <LeadEmptyState
-            title="No recent activity"
-            description="Activity from leads (creations, status changes, followups, site visits) will appear here."
-          />
-        ) : (
-          <div className="space-y-2">
-            {visibleTimeline.map((item) => (
-              <ActivityTimelineItem key={`${item.type}-${item.id}`} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-primary">{card.title}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {card.description}
+                  </p>
+                </div>
+                <Badge variant={card.variant} className="shrink-0 text-lg px-3 py-1">
+                  {count}
+                </Badge>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
     </div>
   );
 }

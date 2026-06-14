@@ -1,8 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useLead } from "@/hooks/use-lead";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,6 +34,14 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
     error,
     refresh,
   } = useLead(leadId, { loadCompanyUsers: false });
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/leads");
+    }
+  };
 
   const leadOpenTotalRef = useRef<{ leadId: string; startedAt: number } | null>(
     null,
@@ -114,7 +122,7 @@ export function LeadDetail({ leadId }: LeadDetailProps) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
+        <Button variant="ghost" size="icon" onClick={handleBack}>
           <ArrowLeft className="size-4" />
         </Button>
         <div>

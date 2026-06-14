@@ -308,6 +308,98 @@ export const leadService = {
     return leadStatusUpdateRepository.create(companyId, input);
   },
 
+  async countFollowupsByCompany(
+    companyId: string,
+    filters: ActivityListParams & { status?: string } = {},
+  ) {
+    const scope = await resolveLeadScope(companyId);
+    if (!scope) {
+      return { count: 0, error: new Error("Not authenticated") };
+    }
+
+    if (!isAssigneeFilterAllowed(scope, filters.assigned_user_id)) {
+      return { count: 0, error: null };
+    }
+
+    return leadFollowupRepository.countByCompany(
+      companyId,
+      {
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        status: filters.status as any,
+        assigned_user_id: filters.assigned_user_id,
+      },
+      scope.visibleAssigneeIds,
+    );
+  },
+
+  async countSiteVisitsByCompany(
+    companyId: string,
+    filters: ActivityListParams & { visit_status?: string | string[] } = {},
+  ) {
+    const scope = await resolveLeadScope(companyId);
+    if (!scope) {
+      return { count: 0, error: new Error("Not authenticated") };
+    }
+
+    if (!isAssigneeFilterAllowed(scope, filters.assigned_user_id)) {
+      return { count: 0, error: null };
+    }
+
+    return leadSiteVisitRepository.countByCompany(
+      companyId,
+      {
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        visit_status: filters.visit_status as any,
+        assigned_user_id: filters.assigned_user_id,
+      },
+      scope.visibleAssigneeIds,
+    );
+  },
+
+  async countWithoutFollowup(
+    companyId: string,
+    statusId?: string,
+    leadSourceId?: string,
+  ) {
+    const scope = await resolveLeadScope(companyId);
+    if (!scope) {
+      return { count: 0, error: new Error("Not authenticated") };
+    }
+
+    return leadRepository.countWithoutFollowup(
+      companyId,
+      [],
+      scope.visibleAssigneeIds,
+      statusId,
+      leadSourceId,
+    );
+  },
+
+  async listWithoutFollowup(
+    companyId: string,
+    page = 1,
+    pageSize = 50,
+    statusId?: string,
+    leadSourceId?: string,
+  ) {
+    const scope = await resolveLeadScope(companyId);
+    if (!scope) {
+      return { data: null, error: new Error("Not authenticated") };
+    }
+
+    return leadRepository.listWithoutFollowup(
+      companyId,
+      [],
+      scope.visibleAssigneeIds,
+      page,
+      pageSize,
+      statusId,
+      leadSourceId,
+    );
+  },
+
   async listFollowupsByCompany(
     companyId: string,
     filters: ActivityListParams = {},

@@ -94,6 +94,61 @@ export const leadSiteVisitRepository = {
 
   // Sprint 3A: company-wide list for dashboard (C/E + timeline completed/created).
   // Returns 3C fields (assigned_user_id/name, team_id, team_leader_id).
+  async countByCompany(
+    companyId: string,
+    filters: {
+      date_from?: string | undefined;
+      date_to?: string | undefined;
+      visit_status?: SiteVisitStatus | SiteVisitStatus[];
+      assigned_user_id?: string | undefined;
+    } = {},
+    scopedAssigneeIds: string[] | null = null,
+  ): Promise<{ count: number; error: Error | null }> {
+    const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return { count: 0, error: null };
+    }
+
+    const supabase = createClient();
+
+    let query = supabase
+      .from("lead_site_visits")
+      .select(
+        `id,
+        leads( assigned_user_id )`,
+        { count: "exact" },
+      )
+      .eq("company_id", scopedCompanyId);
+
+    if (filters.date_from) {
+      query = query.gte("visit_date", filters.date_from);
+    }
+    if (filters.date_to) {
+      query = query.lte("visit_date", filters.date_to);
+    }
+    if (filters.visit_status) {
+      if (Array.isArray(filters.visit_status)) {
+        query = query.in("visit_status", filters.visit_status);
+      } else {
+        query = query.eq("visit_status", filters.visit_status);
+      }
+    }
+    if (filters.assigned_user_id) {
+      query = query.eq("leads.assigned_user_id", filters.assigned_user_id);
+    } else if (scopedAssigneeIds !== null) {
+      query = query.in("leads.assigned_user_id", scopedAssigneeIds);
+    }
+
+    const { count, error } = await query;
+
+    if (error) {
+      return { count: 0, error: error as Error };
+    }
+
+    return { count: count ?? 0, error: null };
+  },
+
   async listByCompany(
     companyId: string,
     filters: {
@@ -161,7 +216,19 @@ export const leadSiteVisitRepository = {
     }
 
     const rows = (data ?? []) as any[];
-    const mapped: LeadSiteVisitListItem[] = rows.map((row) => {
+    
+    // Deduplicate by lead_id only - keep earliest visit_date (then earliest created_at)
+    // This ensures one card per lead in the task queue, not per site visit record
+    const seen = new Map<string, any>();
+    for (const row of rows) {
+      const key = row.lead_id;
+      if (!seen.has(key)) {
+        seen.set(key, row);
+      }
+    }
+    const dedupedRows = Array.from(seen.values());
+
+    const mapped: LeadSiteVisitListItem[] = dedupedRows.map((row) => {
       const lead = row.leads ? (Array.isArray(row.leads) ? row.leads[0] : row.leads) : null;
       const assigned = lead?.assigned_user ? (Array.isArray(lead.assigned_user) ? lead.assigned_user[0] : lead.assigned_user) : null;
       const proj = normalizeRelation(row.projects);

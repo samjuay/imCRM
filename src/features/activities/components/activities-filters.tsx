@@ -3,17 +3,21 @@
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import type { ActivityFilters, CompanyUser } from "@/types/lead";
+import type { ActivityFilters, CompanyUser, LeadSource, LeadStatus } from "@/types";
 
 type ActivitiesFiltersProps = {
   filters: ActivityFilters;
   companyUsers: CompanyUser[];
+  leadSources: LeadSource[];
+  leadStatuses: LeadStatus[];
   onChange: (filters: ActivityFilters) => void;
 };
 
 export function ActivitiesFilters({
   filters,
   companyUsers,
+  leadSources,
+  leadStatuses,
   onChange,
 }: ActivitiesFiltersProps) {
   return (
@@ -48,6 +52,52 @@ export function ActivitiesFilters({
               {u.full_name}
             </option>
           ))}
+        </Select>
+      </div>
+
+      <div className="min-w-[160px] space-y-1.5">
+        <Label htmlFor="activity-status">Status</Label>
+        <Select
+          id="activity-status"
+          value={filters.status_id ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...filters,
+              status_id: e.target.value || undefined,
+            })
+          }
+        >
+          <option value="">All Statuses</option>
+          {leadStatuses
+            .filter((s) => s.is_active)
+            .map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.status_name}
+              </option>
+            ))}
+        </Select>
+      </div>
+
+      <div className="min-w-[160px] space-y-1.5">
+        <Label htmlFor="activity-source">Source</Label>
+        <Select
+          id="activity-source"
+          value={filters.lead_source_id ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...filters,
+              lead_source_id: e.target.value || undefined,
+            })
+          }
+        >
+          <option value="">All Sources</option>
+          {leadSources
+            .filter((s) => s.is_active)
+            .map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.source_name}
+              </option>
+            ))}
         </Select>
       </div>
 

@@ -24,36 +24,21 @@ type LeadFormProps = {
   mode: "create" | "edit";
   lead?: LeadDetail;
   companyUsers: CompanyUser[];
-  currentUser?: { user_id: string; role: string; full_name: string } | null;
-  defaultAssignedUserId?: string;
 };
 
-export function LeadForm({
-  mode,
-  lead,
-  companyUsers,
-  currentUser,
-  defaultAssignedUserId,
-}: LeadFormProps) {
+export function LeadForm({ mode, lead, companyUsers }: LeadFormProps) {
   const router = useRouter();
   const user = useUser();
-  const isSalesExecutive = currentUser?.role === "sales_executive" || user?.role === "sales_executive";
+  const isSalesExecutive = user?.role === "sales_executive";
   const { leadSources, leadStatuses } = useMasterData();
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
   const defaultStatus = leadStatuses.find((s) => s.status_name === "Fresh");
 
-  // For Sales Executive in create mode, auto-assign to self
-  const effectiveDefaultAssignedUserId =
-    mode === "create" && isSalesExecutive
-      ? currentUser?.user_id ?? user?.user_id ?? defaultAssignedUserId ?? ""
-      : lead?.assigned_user_id ?? defaultAssignedUserId ?? "";
-
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-    setValue,
   } = useForm<LeadFormValues>({
     resolver: zodResolver(leadFormSchema),
     defaultValues: {
@@ -66,16 +51,10 @@ export function LeadForm({
       location: lead?.location ?? "",
       requirement: lead?.requirement ?? "",
       remarks: lead?.remarks ?? "",
-      assigned_user_id: effectiveDefaultAssignedUserId,
+      assigned_user_id: lead?.assigned_user_id ?? "",
       assignment_reason: "",
     },
   });
-
-  // For Sales Executive in create mode, set the assigned_user_id to their own ID
-  // This ensures the form validation passes even though the field is hidden
-  if (mode === "create" && isSalesExecutive) {
-    setValue("assigned_user_id", effectiveDefaultAssignedUserId, { shouldValidate: true });
-  }
 
   const checkDuplicatePhone = async (phone: string) => {
     if (!user?.company_id || phone.length < 10) {
@@ -276,45 +255,29 @@ export function LeadForm({
           )}
         </div>
 
-        {/* Sales Executive in create mode: auto-assign to self, hide dropdown */}
-        {!(mode === "create" && isSalesExecutive) && (
-          <div className="space-y-2">
-            <Label htmlFor="assigned_user_id">Assigned To *</Label>
-            <Select
-              id="assigned_user_id"
-              {...register("assigned_user_id")}
-              disabled={mode === "edit" && isSalesExecutive}
-            >
-              {/* For create: no unassigned option (explicit assignment required per Sprint 3B model).
-                  For edit: allow keeping current (even if was null in legacy data). */}
-              {mode === "create" ? null : <option value="">Unassigned (legacy)</option>}
-              {companyUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name}
-                </option>
-              ))}
-            </Select>
-            {errors.assigned_user_id && (
-              <p className="text-sm text-destructive">{errors.assigned_user_id.message}</p>
-            )}
-            {mode === "edit" && isSalesExecutive && (
-              <p className="text-xs text-muted-foreground">Sales executives cannot change lead assignment.</p>
-            )}
-          </div>
-        )}
-
-        {/* Sales Executive in create mode: show auto-assignment info */}
-        {mode === "create" && isSalesExecutive && (
-          <div className="space-y-2">
-            <Label htmlFor="assigned_user_id">Assigned To</Label>
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm">
-              <span className="font-medium text-primary">
-                {currentUser?.full_name ?? user?.full_name ?? "You"}
-              </span>
-              <span className="text-xs text-muted-foreground">(auto-assigned)</span>
-            </div>
-          </div>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="assigned_user_id">Assigned To *</Label>
+          <Select
+            id="assigned_user_id"
+            {...register("assigned_user_id")}
+            disabled={mode === "edit" && isSalesExecutive}
+          >
+            {/* For create: no unassigned option (explicit assignment required per Sprint 3B model).
+                For edit: allow keeping current (even if was null in legacy data). */}
+            {mode === "create" ? null : <option value="">Unassigned (legacy)</option>}
+            {companyUsers.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.full_name}
+              </option>
+            ))}
+          </Select>
+          {errors.assigned_user_id && (
+            <p className="text-sm text-destructive">{errors.assigned_user_id.message}</p>
+          )}
+          {mode === "edit" && isSalesExecutive && (
+            <p className="text-xs text-muted-foreground">Sales executives cannot change lead assignment.</p>
+          )}
+        </div>
 
         {/* Sprint 3B: optional assignment reason (max 500 chars, validated in UI) */}
         <div className="space-y-2 sm:col-span-2">

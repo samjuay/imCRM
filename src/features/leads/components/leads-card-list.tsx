@@ -41,20 +41,12 @@ export function LeadsCardList({ leads, selectedIds = [], onToggleSelect }: Leads
           key={lead.id}
           role="button"
           tabIndex={0}
-          onClick={() => {
-            console.log('[CARD] CLICK', lead.id);
-            router.push(`/leads/${lead.id}`);
-          }}
-          onMouseEnter={() => {
-            if (companyId) {
-              console.log('[CARD] MOUSE_ENTER_PREFETCH', lead.id);
-              handlePrefetch(lead.id);
-            }
-          }}
+          onClick={() => router.push(`/leads/${lead.id}`)}
+          onTouchStart={() => handlePrefetch(lead.id)}
+          onPointerDown={() => handlePrefetch(lead.id)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              console.log('[CARD] KEYDOWN', lead.id);
               router.push(`/leads/${lead.id}`);
             }
           }}
