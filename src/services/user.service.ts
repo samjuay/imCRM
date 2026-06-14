@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { normalizeRelation } from "@/lib/database/supabase-relations";
 import type { UserProfile } from "@/types/auth";
-import type { CompanyUser } from "@/types/lead";
+import type { CompanyUser, LeadSource, LeadStatus } from "@/types";
 import type { DbUser } from "@/types/database";
 
 type RawCompanyUserRow = {
@@ -101,5 +101,37 @@ export const userService = {
       profile: mapDbUserToProfile(data as DbUser),
       error: null,
     };
+  },
+
+  async getLeadSources(companyId: string) {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("lead_sources")
+      .select("id, company_id, source_name, is_active, created_at")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("source_name", { ascending: true });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    return { data: data as LeadSource[], error: null };
+  },
+
+  async getLeadStatuses(companyId: string) {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("lead_statuses")
+      .select("id, company_id, status_name, display_order, is_active, created_at")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("display_order", { ascending: true });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    return { data: data as LeadStatus[], error: null };
   },
 };

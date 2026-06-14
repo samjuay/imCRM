@@ -57,6 +57,8 @@ export type {
   ActivityItem,
   ActivityFilters,
   ActivityListParams,
+  ActivityCardId,
+  ActivityCounts,
   LeadActivityContext,
   LeadFollowupListItem,
   LeadSiteVisitListItem,

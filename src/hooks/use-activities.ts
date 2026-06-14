@@ -1,26 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { filterCompanyUsersForScope } from "@/lib/auth/lead-scope";
 import { useUser } from "@/hooks/use-user";
+import { useMasterDataStore } from "@/store/master-data-store";
 import { leadService } from "@/services/leads";
 import { userService } from "@/services/user.service";
 import type {
+  ActivityCardId,
+  ActivityCounts,
   ActivityFilters,
-  ActivityItem,
-  ActivityType,
   CompanyUser,
   FollowupActivityItem,
-  LeadCreatedActivityItem,
   LeadFollowupListItem,
+  LeadListItem,
   LeadSiteVisitListItem,
-  LeadStatusUpdateListItem,
+  LeadSource,
+  LeadStatus,
   SiteVisitActivityItem,
-  StatusChangeActivityItem,
-} from "@/types/lead";
+} from "@/types";
 
-const PAGE_SIZE_SMALL = 20; // for categorized dashboard sections
-const TIMELINE_LIMIT = 40;
+const DETAIL_PAGE_SIZE = 50;
 
 function getTodayBounds() {
   const now = new Date();
@@ -28,14 +28,17 @@ function getTodayBounds() {
   startOfToday.setHours(0, 0, 0, 0);
   const endOfToday = new Date(startOfToday);
   endOfToday.setDate(endOfToday.getDate() + 1);
+  const weekEnd = new Date(endOfToday);
+  weekEnd.setDate(weekEnd.getDate() + 7);
   return {
     todayStart: startOfToday.toISOString(),
     todayEnd: endOfToday.toISOString(),
     tomorrowStart: endOfToday.toISOString(),
+    weekEnd: weekEnd.toISOString(),
   };
 }
 
-function mapFollowupToActivity(f: LeadFollowupListItem): FollowupActivityItem {
+function mapFollowupToListItem(f: LeadFollowupListItem): FollowupActivityItem {
   return {
     id: f.id,
     type: "followup_created",
@@ -55,12 +58,11 @@ function mapFollowupToActivity(f: LeadFollowupListItem): FollowupActivityItem {
   };
 }
 
-function mapSiteVisitToActivity(v: LeadSiteVisitListItem): SiteVisitActivityItem {
-  const isCompleted = v.visit_status === "done";
+function mapSiteVisitToListItem(v: LeadSiteVisitListItem): SiteVisitActivityItem {
   return {
     id: v.id,
-    type: isCompleted ? "site_visit_completed" : "site_visit_created",
-    occurred_at: isCompleted && v.visit_date ? v.visit_date : v.created_at,
+    type: v.visit_status === "done" ? "site_visit_completed" : "site_visit_created",
+    occurred_at: v.visit_status === "done" && v.visit_date ? v.visit_date : v.created_at,
     lead_id: v.lead_id,
     lead_full_name: v.lead_full_name,
     assigned_user_id: v.assigned_user_id,
@@ -75,285 +77,307 @@ function mapSiteVisitToActivity(v: LeadSiteVisitListItem): SiteVisitActivityItem
   };
 }
 
-function mapStatusUpdateToActivity(u: LeadStatusUpdateListItem): StatusChangeActivityItem {
-  const isBooking = u.new_status === "Booked";
-  return {
-    id: u.id,
-    type: isBooking ? "booking_completed" : "status_changed",
-    occurred_at: u.created_at,
-    lead_id: u.lead_id,
-    lead_full_name: u.lead_full_name,
-    assigned_user_id: u.assigned_user_id,
-    assigned_user_name: u.assigned_user_name,
-    team_id: u.team_id,
-    team_leader_id: u.team_leader_id,
-    previous_status: u.previous_status,
-    new_status: u.new_status,
-    outcome: u.outcome,
-    remark: u.remark,
-    next_followup_date: u.next_followup_date,
-    visit_date: u.visit_date,
-    project_name: u.project_name,
-    created_by_name: u.created_by_name,
-  };
-}
-
-function mapLeadCreationToActivity(l: any): LeadCreatedActivityItem {
-  return {
-    id: `lead-${l.id}`,
-    type: "lead_created",
-    occurred_at: l.created_at,
-    lead_id: l.id,
-    lead_full_name: l.full_name,
-    lead_status_name: l.status_name,
-    assigned_user_id: l.assigned_user_id,
-    assigned_user_name: l.assigned_user_name,
-    team_id: l.team_id,
-    team_leader_id: l.team_leader_id,
-    created_at: l.created_at,
-    source_name: l.source_name,
-    status_name: l.status_name,
-    created_by_name: undefined, // lead has created_by but not enriched here for V1
-  };
-}
-
-// Sprint 3B: map assignment audit rows (from lead_status_updates) to lead_assigned
-// Existing 3A mappers for other types are untouched.
-function mapLeadAssignedToActivity(u: any): any {
-  return {
-    id: u.id,
-    type: "lead_assigned",
-    occurred_at: u.created_at,
-    lead_id: u.lead_id,
-    lead_full_name: u.lead_full_name,
-    assigned_user_id: u.assigned_user_id,
-    assigned_user_name: u.assigned_user_name,
-    team_id: u.team_id,
-    team_leader_id: u.team_leader_id,
-    previous_assigned_user_id: u.previous_assigned_user_id,
-    new_assigned_user_id: u.new_assigned_user_id,
-    assigned_by_user_id: u.assigned_by_user_id,
-    assignment_reason: u.assignment_reason,
-    previous_assigned_user_name: u.previous_assigned_user_name,
-    new_assigned_user_name: u.new_assigned_user_name,
-    assigned_by_user_name: u.assigned_by_user_name,
-    created_by_name: u.created_by_name,
-  };
-}
-
-export function useActivities(initialFilters: ActivityFilters = {}) {
+export function useActivities() {
   const user = useUser();
-  const [filters, setFilters] = useState<ActivityFilters>(initialFilters);
+  const companyId = user?.company_id;
+
+  const [filters, setFilters] = useState<ActivityFilters>({});
   const [companyUsers, setCompanyUsers] = useState<CompanyUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [leadSources, setLeadSources] = useState<LeadSource[]>([]);
+  const [leadStatuses, setLeadStatuses] = useState<LeadStatus[]>([]);
+  const [isCountsLoading, setIsCountsLoading] = useState(true);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Categorized data (dashboard-first)
-  const [followupsDueToday, setFollowupsDueToday] = useState<FollowupActivityItem[]>([]);
-  const [overdueFollowups, setOverdueFollowups] = useState<FollowupActivityItem[]>([]);
-  const [siteVisitsToday, setSiteVisitsToday] = useState<SiteVisitActivityItem[]>([]);
-  const [upcomingFollowups, setUpcomingFollowups] = useState<FollowupActivityItem[]>([]);
-  const [upcomingSiteVisits, setUpcomingSiteVisits] = useState<SiteVisitActivityItem[]>([]);
+  const [counts, setCounts] = useState<ActivityCounts>({
+    overdueFollowups: 0,
+    followupsToday: 0,
+    leadsWithoutFollowup: 0,
+    siteVisitsToday: 0,
+    upcomingFollowups: 0,
+    upcomingSiteVisits: 0,
+  });
 
-  // F: Recent Activity Timeline (unified, 6 event types)
-  const [recentTimeline, setRecentTimeline] = useState<ActivityItem[]>([]);
+  const [detailData, setDetailData] = useState<{
+    cardId: ActivityCardId;
+    items: (FollowupActivityItem | SiteVisitActivityItem)[];
+    leads: LeadListItem[];
+  } | null>(null);
 
-  const companyId = user?.company_id;
+  const masterLeadStatuses = useMasterDataStore((s) => s.leadStatuses);
+  const masterLeadSources = useMasterDataStore((s) => s.leadSources);
 
-  useEffect(() => {
-    if (!companyId) {
-      return;
-    }
+  const loadCounts = useCallback(async () => {
+    if (!companyId) return;
 
     let cancelled = false;
-    const bounds = getTodayBounds();
 
-    setIsLoading(true);
+    setIsCountsLoading(true);
     setError(null);
 
-    async function load() {
-      try {
-        // Parallel loads for the 5 categorized sections + timeline pieces
-        const [
-          dueTodayRes,
-          overdueRes,
-          visitsTodayRes,
-          upcomingFuRes,
-          upcomingSvRes,
-          recentPieces,
-          creationsRes,
-          usersRes,
-        ] = await Promise.all([
-          // A. Followups Due Today
-          // @ts-expect-error - filter value undefined compatibility for V1
-          leadService.listFollowupsByCompany(companyId, {
-            date_from: bounds.todayStart,
-            date_to: bounds.todayEnd,
-            status: "pending",
-            assigned_user_id: filters.assigned_user_id as any,
-            search: filters.search as any,
-          } as any, 1, PAGE_SIZE_SMALL),
+    try {
+      const bounds = getTodayBounds();
 
-          // B. Overdue Followups
-          // @ts-expect-error - filter value undefined compatibility for V1
-          leadService.listFollowupsByCompany(companyId, {
-            date_to: bounds.todayStart,
-            status: "pending",
-            assigned_user_id: filters.assigned_user_id as any,
-            search: filters.search as any,
-          } as any, 1, PAGE_SIZE_SMALL),
+      const [
+        overdueRes,
+        dueTodayRes,
+        noFollowupRes,
+        svTodayRes,
+        upFuRes,
+        upSvRes,
+        usersRes,
+        sourcesRes,
+        statusesRes,
+      ] = await Promise.all([
+        leadService.countFollowupsByCompany(companyId, {
+          date_to: bounds.todayStart,
+          status: "pending",
+          assigned_user_id: filters.assigned_user_id,
+          search: filters.search,
+        } as any),
+        leadService.countFollowupsByCompany(companyId, {
+          date_from: bounds.todayStart,
+          date_to: bounds.todayEnd,
+          status: "pending",
+          assigned_user_id: filters.assigned_user_id,
+          search: filters.search,
+        } as any),
+        leadService.countWithoutFollowup(companyId, filters.status_id, filters.lead_source_id),
+        leadService.countSiteVisitsByCompany(companyId, {
+          date_from: bounds.todayStart,
+          date_to: bounds.todayEnd,
+          visit_status: ["planned", "rescheduled"],
+          assigned_user_id: filters.assigned_user_id,
+          search: filters.search,
+        } as any),
+        leadService.countFollowupsByCompany(companyId, {
+          date_from: bounds.tomorrowStart,
+          date_to: bounds.weekEnd,
+          status: "pending",
+          assigned_user_id: filters.assigned_user_id,
+          search: filters.search,
+        } as any),
+        leadService.countSiteVisitsByCompany(companyId, {
+          date_from: bounds.tomorrowStart,
+          date_to: bounds.weekEnd,
+          visit_status: ["planned", "rescheduled"],
+          assigned_user_id: filters.assigned_user_id,
+          search: filters.search,
+        } as any),
+        userService.getByCompany(companyId),
+        userService.getLeadSources(companyId),
+        userService.getLeadStatuses(companyId),
+      ]);
 
-          // C. Site Visits Today
-          // @ts-expect-error - filter value undefined compatibility for V1
-          leadService.listSiteVisitsByCompany(companyId, {
-            date_from: bounds.todayStart,
-            date_to: bounds.todayEnd,
-            visit_status: ["planned", "rescheduled"] as any,
-            assigned_user_id: filters.assigned_user_id as any,
-            search: filters.search as any,
-          } as any, 1, PAGE_SIZE_SMALL),
+      if (cancelled) return;
 
-          // D. Upcoming Followups
-          // @ts-expect-error - filter value undefined compatibility for V1
-          leadService.listFollowupsByCompany(companyId, {
-            date_from: bounds.tomorrowStart,
-            status: "pending",
-            assigned_user_id: filters.assigned_user_id as any,
-            search: filters.search as any,
-          } as any, 1, PAGE_SIZE_SMALL),
+      setCounts({
+        overdueFollowups: overdueRes.count ?? 0,
+        followupsToday: dueTodayRes.count ?? 0,
+        leadsWithoutFollowup: noFollowupRes.count ?? 0,
+        siteVisitsToday: svTodayRes.count ?? 0,
+        upcomingFollowups: upFuRes.count ?? 0,
+        upcomingSiteVisits: upSvRes.count ?? 0,
+      });
 
-          // E. Upcoming Site Visits
-          // @ts-expect-error - filter value undefined compatibility for V1
-          leadService.listSiteVisitsByCompany(companyId, {
-            date_from: bounds.tomorrowStart,
-            visit_status: ["planned", "rescheduled"] as any,
-            assigned_user_id: filters.assigned_user_id as any,
-            search: filters.search as any,
-          } as any, 1, PAGE_SIZE_SMALL),
+      if (usersRes.data && user) {
+        setCompanyUsers(
+          filterCompanyUsersForScope(user, usersRes.data as CompanyUser[], "view"),
+        );
+      }
 
-          // F pieces (recent from three tables)
-          leadService.listRecentActivities(companyId as string, TIMELINE_LIMIT),
+      if (sourcesRes.data) {
+        setLeadSources(sourcesRes.data as LeadSource[]);
+      }
 
-          // Lead Created events (F)
-          leadService.listRecentLeadCreations(companyId as string, null as any, TIMELINE_LIMIT),
+      if (statusesRes.data) {
+        setLeadStatuses(statusesRes.data as LeadStatus[]);
+      }
 
-          // For filter dropdown
-          userService.getByCompany(companyId as string),
-        ]);
-
-        if (cancelled) return;
-
-        // Map categorized
-        const dueTodayItems: FollowupActivityItem[] = (dueTodayRes.data ?? []).map(mapFollowupToActivity);
-        const overdueItems: FollowupActivityItem[] = (overdueRes.data ?? []).map(mapFollowupToActivity);
-        const svTodayItems: SiteVisitActivityItem[] = (visitsTodayRes.data ?? []).map(mapSiteVisitToActivity);
-        const upFuItems: FollowupActivityItem[] = (upcomingFuRes.data ?? []).map(mapFollowupToActivity);
-        const upSvItems: SiteVisitActivityItem[] = (upcomingSvRes.data ?? []).map(mapSiteVisitToActivity);
-
-        setFollowupsDueToday(dueTodayItems);
-        setOverdueFollowups(overdueItems);
-        setSiteVisitsToday(svTodayItems);
-        setUpcomingFollowups(upFuItems);
-        setUpcomingSiteVisits(upSvItems);
-
-        // Assemble unified timeline (F) - 6 event types
-        const { followups = [], siteVisits = [], statusUpdates = [] } = recentPieces as any;
-        const leadCreations = (creationsRes.data ?? []) as any[];
-
-        const timeline: ActivityItem[] = [
-          // Sprint 3B: assignment rows (those with the new audit fields) map to lead_assigned;
-          // all other status updates continue to use the original 3A mapper unchanged.
-          ...statusUpdates.map((u: any) =>
-            u.previous_assigned_user_id || u.new_assigned_user_id
-              ? mapLeadAssignedToActivity(u)
-              : mapStatusUpdateToActivity(u)
-          ),
-          ...followups.map(mapFollowupToActivity),
-          ...siteVisits.map(mapSiteVisitToActivity),
-          ...leadCreations.map(mapLeadCreationToActivity),
-        ];
-
-        // Sort most recent first, dedupe by id+type (simple), take limit
-        timeline.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
-        const seen = new Set<string>();
-        const deduped = timeline.filter((it) => {
-          const key = `${it.type}:${it.id}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }).slice(0, TIMELINE_LIMIT);
-
-        setRecentTimeline(deduped);
-
-        if (usersRes.data && user) {
-          setCompanyUsers(
-            filterCompanyUsersForScope(
-              user,
-              usersRes.data as CompanyUser[],
-              "view",
-            ),
-          );
-        }
-
-        setIsLoading(false);
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message ?? "Failed to load activities");
-          setIsLoading(false);
-        }
+      if (!cancelled) {
+        setIsCountsLoading(false);
+      }
+    } catch (e: any) {
+      if (!cancelled) {
+        setError(e?.message ?? "Failed to load activities");
+        setIsCountsLoading(false);
       }
     }
-
-    void load();
 
     return () => {
       cancelled = true;
     };
-  }, [companyId, filters, refreshKey, user]);
+  }, [companyId, filters, user, refreshKey]);
 
-  const updateFilters = (next: ActivityFilters) => {
+  const loadDetail = useCallback(
+    async (cardId: ActivityCardId) => {
+      if (!companyId) return;
+
+      let cancelled = false;
+
+      setIsDetailLoading(true);
+      setError(null);
+
+      try {
+        const bounds = getTodayBounds();
+
+        switch (cardId) {
+          case "overdue-followups": {
+            const res = await leadService.listFollowupsByCompany(companyId, {
+              date_to: bounds.todayStart,
+              status: "pending",
+              assigned_user_id: filters.assigned_user_id,
+              search: filters.search,
+            } as any, 1, DETAIL_PAGE_SIZE);
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: (res.data ?? []).map(mapFollowupToListItem),
+              leads: [],
+            });
+            break;
+          }
+          case "followups-today": {
+            const res = await leadService.listFollowupsByCompany(companyId, {
+              date_from: bounds.todayStart,
+              date_to: bounds.todayEnd,
+              status: "pending",
+              assigned_user_id: filters.assigned_user_id,
+              search: filters.search,
+            } as any, 1, DETAIL_PAGE_SIZE);
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: (res.data ?? []).map(mapFollowupToListItem),
+              leads: [],
+            });
+            break;
+          }
+          case "leads-without-followup": {
+            const res = await leadService.listWithoutFollowup(
+              companyId,
+              1,
+              DETAIL_PAGE_SIZE,
+              filters.status_id,
+              filters.lead_source_id,
+            );
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: [],
+              leads: res.data ?? [],
+            });
+            break;
+          }
+          case "site-visits-today": {
+            const res = await leadService.listSiteVisitsByCompany(companyId, {
+              date_from: bounds.todayStart,
+              date_to: bounds.todayEnd,
+              visit_status: ["planned", "rescheduled"],
+              assigned_user_id: filters.assigned_user_id,
+              search: filters.search,
+            } as any, 1, DETAIL_PAGE_SIZE);
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: (res.data ?? []).map(mapSiteVisitToListItem),
+              leads: [],
+            });
+            break;
+          }
+          case "upcoming-followups": {
+            const res = await leadService.listFollowupsByCompany(companyId, {
+              date_from: bounds.tomorrowStart,
+              date_to: bounds.weekEnd,
+              status: "pending",
+              assigned_user_id: filters.assigned_user_id,
+              search: filters.search,
+            } as any, 1, DETAIL_PAGE_SIZE);
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: (res.data ?? []).map(mapFollowupToListItem),
+              leads: [],
+            });
+            break;
+          }
+          case "upcoming-site-visits": {
+            const res = await leadService.listSiteVisitsByCompany(companyId, {
+              date_from: bounds.tomorrowStart,
+              date_to: bounds.weekEnd,
+              visit_status: ["planned", "rescheduled"],
+              assigned_user_id: filters.assigned_user_id,
+              search: filters.search,
+            } as any, 1, DETAIL_PAGE_SIZE);
+            if (cancelled) return;
+            setDetailData({
+              cardId,
+              items: (res.data ?? []).map(mapSiteVisitToListItem),
+              leads: [],
+            });
+            break;
+          }
+        }
+
+        if (!cancelled) {
+          setIsDetailLoading(false);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(e?.message ?? "Failed to load details");
+          setIsDetailLoading(false);
+        }
+      }
+
+      return () => {
+        cancelled = true;
+      };
+    },
+    [companyId, filters],
+  );
+
+  const clearDetail = useCallback(() => {
+    setDetailData(null);
+  }, []);
+
+  useEffect(() => {
+    let cleanupFn: (() => void) | undefined;
+
+    void loadCounts().then((fn) => {
+      cleanupFn = fn;
+    });
+
+    return () => {
+      if (cleanupFn) cleanupFn();
+    };
+  }, [loadCounts]);
+
+  const updateFilters = useCallback((next: ActivityFilters) => {
     setFilters(next);
-  };
+  }, []);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setRefreshKey((k) => k + 1);
-  };
-
-  const clearFilters = () => {
-    setFilters({});
-  };
+    setDetailData(null);
+  }, []);
 
   return {
-    // Filters
     filters,
     companyUsers,
+    leadSources,
+    leadStatuses,
     updateFilters,
-    clearFilters,
     refresh,
 
-    // Loading / error
-    isLoading,
+    isCountsLoading,
+    isDetailLoading,
     error,
 
-    // A-E categorized (dashboard-first)
-    followupsDueToday,
-    overdueFollowups,
-    siteVisitsToday,
-    upcomingFollowups,
-    upcomingSiteVisits,
+    counts,
+    detailData,
 
-    // F
-    recentTimeline,
-
-    // Counts for badges etc.
-    counts: {
-      dueToday: followupsDueToday.length,
-      overdue: overdueFollowups.length,
-      visitsToday: siteVisitsToday.length,
-      upcomingFollowups: upcomingFollowups.length,
-      upcomingSiteVisits: upcomingSiteVisits.length,
-      timeline: recentTimeline.length,
-    },
+    loadDetail,
+    clearDetail,
   };
 }

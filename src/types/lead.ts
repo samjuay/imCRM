@@ -321,6 +321,8 @@ export type ActivityItem =
 export type ActivityFilters = {
   search?: string | undefined;
   assigned_user_id?: string | undefined;
+  status_id?: string | undefined;
+  lead_source_id?: string | undefined;
   activity_types?: ActivityType[];
 };
 
@@ -335,3 +337,20 @@ export type ActivityListParams = ActivityFilters & {
 export type LeadFollowupListItem = LeadFollowup & LeadActivityContext;
 export type LeadSiteVisitListItem = LeadSiteVisit & LeadActivityContext;
 export type LeadStatusUpdateListItem = LeadStatusUpdate & LeadActivityContext;
+
+export type ActivityCardId =
+  | "overdue-followups"
+  | "followups-today"
+  | "leads-without-followup"
+  | "site-visits-today"
+  | "upcoming-followups"
+  | "upcoming-site-visits";
+
+export type ActivityCounts = {
+  overdueFollowups: number;
+  followupsToday: number;
+  leadsWithoutFollowup: number;
+  siteVisitsToday: number;
+  upcomingFollowups: number;
+  upcomingSiteVisits: number;
+};

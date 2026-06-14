@@ -70,6 +70,71 @@ function mapDetailRow(row: LeadDetailRow): LeadDetail {
   };
 }
 
+function getTodayISO(): string {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return now.toISOString();
+}
+
+async function getLeadIdsWithNextActionDate(
+  supabase: ReturnType<typeof createClient>,
+  scopedCompanyId: string,
+  scopedAssigneeIds: string[] | null,
+): Promise<Set<string>> {
+  const today = getTodayISO();
+  const leadIds = new Set<string>();
+
+  // 1. Pending followups with future/present followup_date
+  const { data: followups } = await supabase
+    .from("lead_followups")
+    .select("lead_id")
+    .eq("company_id", scopedCompanyId)
+    .eq("status", "pending")
+    .gte("followup_date", today);
+
+  if (followups) {
+    followups.forEach((r: any) => leadIds.add(r.lead_id));
+  }
+
+  // 2. Planned/rescheduled site visits with future/present visit_date
+  const { data: siteVisits } = await supabase
+    .from("lead_site_visits")
+    .select("lead_id")
+    .eq("company_id", scopedCompanyId)
+    .in("visit_status", ["planned", "rescheduled"])
+    .gte("visit_date", today);
+
+  if (siteVisits) {
+    siteVisits.forEach((r: any) => leadIds.add(r.lead_id));
+  }
+
+  // 3. Status updates with next_followup_date
+  const { data: statusUpdatesNextFollowup } = await supabase
+    .from("lead_status_updates")
+    .select("lead_id")
+    .eq("company_id", scopedCompanyId)
+    .not("next_followup_date", "is", null)
+    .gte("next_followup_date", today);
+
+  if (statusUpdatesNextFollowup) {
+    statusUpdatesNextFollowup.forEach((r: any) => leadIds.add(r.lead_id));
+  }
+
+  // 4. Status updates with visit_date
+  const { data: statusUpdatesVisitDate } = await supabase
+    .from("lead_status_updates")
+    .select("lead_id")
+    .eq("company_id", scopedCompanyId)
+    .not("visit_date", "is", null)
+    .gte("visit_date", today);
+
+  if (statusUpdatesVisitDate) {
+    statusUpdatesVisitDate.forEach((r: any) => leadIds.add(r.lead_id));
+  }
+
+  return leadIds;
+}
+
 export const leadRepository = {
   async getDetailBundle(id: string) {
     const startedAt = performance.now();
@@ -116,10 +181,9 @@ export const leadRepository = {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    // Use estimated count for better performance (exact count is expensive on large tables)
     let query = supabase
       .from("leads")
-      .select(LEAD_LIST_SELECT, { count: "planned" })
+      .select(LEAD_LIST_SELECT, { count: "exact" })
       .eq("company_id", scopedCompanyId)
       .order("created_at", { ascending: false })
       .range(from, to);
@@ -149,8 +213,7 @@ export const leadRepository = {
       return { data: null, error };
     }
 
-    // For "planned" count, count may be null or estimated; fall back to pageSize * page logic if needed
-    const total = count ?? (page === 1 && (data?.length ?? 0) < pageSize ? (data?.length ?? 0) : page * pageSize);
+    const total = count ?? 0;
     const rows = (data ?? []) as unknown as LeadListRow[];
 
     console.log('[LEADS] REPO_MAPPING_COMPLETE', { mapped: rows.length });
@@ -233,6 +296,122 @@ export const leadRepository = {
       .delete()
       .eq("company_id", scopedCompanyId)
       .eq("id", id);
+  },
+
+  async countWithoutFollowup(
+    companyId: string,
+    _terminalStatusIds: string[],
+    scopedAssigneeIds: string[] | null = null,
+    statusId?: string,
+    leadSourceId?: string,
+  ): Promise<{ count: number; error: Error | null }> {
+    const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return { count: 0, error: null };
+    }
+
+    const supabase = createClient();
+
+    const leadsWithNextAction = await getLeadIdsWithNextActionDate(
+      supabase,
+      scopedCompanyId,
+      scopedAssigneeIds,
+    );
+
+    // Fetch ALL scoped lead IDs, then filter in memory
+    // This matches the exact same logic as listWithoutFollowup
+    let query = supabase
+      .from("leads")
+      .select("id")
+      .eq("company_id", scopedCompanyId);
+
+    if (scopedAssigneeIds !== null) {
+      query = query.in("assigned_user_id", scopedAssigneeIds);
+    }
+
+    if (statusId) {
+      query = query.eq("status_id", statusId);
+    }
+
+    if (leadSourceId) {
+      query = query.eq("lead_source_id", leadSourceId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { count: 0, error: error as Error };
+    }
+
+    const scopedLeadIds = (data ?? []).map((r: any) => r.id as string);
+    const count = scopedLeadIds.filter((id: string) => !leadsWithNextAction.has(id)).length;
+
+    return { count, error: null };
+  },
+
+  async listWithoutFollowup(
+    companyId: string,
+    _terminalStatusIds: string[],
+    scopedAssigneeIds: string[] | null = null,
+    page = 1,
+    pageSize = 50,
+    statusId?: string,
+    leadSourceId?: string,
+  ): Promise<{ data: LeadListItem[] | null; error: Error | null; total?: number }> {
+    const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return { data: [], error: null, total: 0 };
+    }
+
+    const supabase = createClient();
+
+    const leadsWithNextAction = await getLeadIdsWithNextActionDate(
+      supabase,
+      scopedCompanyId,
+      scopedAssigneeIds,
+    );
+
+    // Fetch ALL scoped leads, then filter and paginate in memory
+    // This ensures count and list use the exact same logical result set
+    let query = supabase
+      .from("leads")
+      .select(LEAD_LIST_SELECT)
+      .eq("company_id", scopedCompanyId)
+      .order("created_at", { ascending: false });
+
+    if (scopedAssigneeIds !== null) {
+      query = query.in("assigned_user_id", scopedAssigneeIds);
+    }
+
+    if (statusId) {
+      query = query.eq("status_id", statusId);
+    }
+
+    if (leadSourceId) {
+      query = query.eq("lead_source_id", leadSourceId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const rows = (data ?? []) as unknown as LeadListRow[];
+    const filtered = rows.filter((r) => !leadsWithNextAction.has(r.id));
+
+    // Apply pagination to filtered results
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize;
+    const paginated = filtered.slice(from, to);
+
+    return {
+      data: paginated.map(mapListRow),
+      error: null,
+      total: filtered.length,
+    };
   },
 
   // Sprint 3A (F only): bounded recent lead creations for "Lead Created" events in timeline.

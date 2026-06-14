@@ -99,6 +99,57 @@ export const leadFollowupRepository = {
   // Sprint 3A: company-wide list for dashboard (A/B/D). Server date/status filters.
   // Returns 3C fields (assigned_user_id/name, team_id, team_leader_id) for Sprint 3C.
   // assigned/search may be post-filtered in small result sets for V1.
+  async countByCompany(
+    companyId: string,
+    filters: {
+      date_from?: string | undefined;
+      date_to?: string | undefined;
+      status?: FollowupStatus;
+      assigned_user_id?: string | undefined;
+    } = {},
+    scopedAssigneeIds: string[] | null = null,
+  ): Promise<{ count: number; error: Error | null }> {
+    const scopedCompanyId = requireCompanyId(companyId);
+
+    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
+      return { count: 0, error: null };
+    }
+
+    const supabase = createClient();
+
+    let query = supabase
+      .from("lead_followups")
+      .select(
+        `id,
+        leads( assigned_user_id )`,
+        { count: "exact" },
+      )
+      .eq("company_id", scopedCompanyId);
+
+    if (filters.date_from) {
+      query = query.gte("followup_date", filters.date_from);
+    }
+    if (filters.date_to) {
+      query = query.lte("followup_date", filters.date_to);
+    }
+    if (filters.status) {
+      query = query.eq("status", filters.status);
+    }
+    if (filters.assigned_user_id) {
+      query = query.eq("leads.assigned_user_id", filters.assigned_user_id);
+    } else if (scopedAssigneeIds !== null) {
+      query = query.in("leads.assigned_user_id", scopedAssigneeIds);
+    }
+
+    const { count, error } = await query;
+
+    if (error) {
+      return { count: 0, error: error as Error };
+    }
+
+    return { count: count ?? 0, error: null };
+  },
+
   async listByCompany(
     companyId: string,
     filters: {
