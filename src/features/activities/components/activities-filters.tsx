@@ -20,6 +20,19 @@ export function ActivitiesFilters({
   leadStatuses,
   onChange,
 }: ActivitiesFiltersProps) {
+  console.log({
+    companyUsersLength: companyUsers?.length,
+    leadSourcesLength: leadSources?.length,
+    leadStatusesLength: leadStatuses?.length,
+    companyUsers,
+    leadSources,
+    leadStatuses,
+    activeStatuses: leadStatuses?.filter(s => s.is_active)?.length,
+    activeSources: leadSources?.filter(s => s.is_active)?.length,
+    companyUsersProps: companyUsers,
+    leadSourcesProps: leadSources,
+    leadStatusesProps: leadStatuses,
+  });
   return (
     <div className="flex flex-wrap items-end gap-3">
       <div className="min-w-[180px] flex-1 space-y-1.5">

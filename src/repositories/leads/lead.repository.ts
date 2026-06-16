@@ -10,6 +10,8 @@ import type {
   LeadListItem,
   PaginatedResult,
   UpdateLeadInput,
+  DashboardLead,
+  DashboardCount,
 } from "@/types/lead";
 
 const LEAD_LIST_SELECT = `
@@ -70,69 +72,22 @@ function mapDetailRow(row: LeadDetailRow): LeadDetail {
   };
 }
 
-function getTodayISO(): string {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return now.toISOString();
-}
-
-async function getLeadIdsWithNextActionDate(
-  supabase: ReturnType<typeof createClient>,
-  scopedCompanyId: string,
-  scopedAssigneeIds: string[] | null,
-): Promise<Set<string>> {
-  const today = getTodayISO();
-  const leadIds = new Set<string>();
-
-  // 1. Pending followups with future/present followup_date
-  const { data: followups } = await supabase
-    .from("lead_followups")
-    .select("lead_id")
-    .eq("company_id", scopedCompanyId)
-    .eq("status", "pending")
-    .gte("followup_date", today);
-
-  if (followups) {
-    followups.forEach((r: any) => leadIds.add(r.lead_id));
-  }
-
-  // 2. Planned/rescheduled site visits with future/present visit_date
-  const { data: siteVisits } = await supabase
-    .from("lead_site_visits")
-    .select("lead_id")
-    .eq("company_id", scopedCompanyId)
-    .in("visit_status", ["planned", "rescheduled"])
-    .gte("visit_date", today);
-
-  if (siteVisits) {
-    siteVisits.forEach((r: any) => leadIds.add(r.lead_id));
-  }
-
-  // 3. Status updates with next_followup_date
-  const { data: statusUpdatesNextFollowup } = await supabase
-    .from("lead_status_updates")
-    .select("lead_id")
-    .eq("company_id", scopedCompanyId)
-    .not("next_followup_date", "is", null)
-    .gte("next_followup_date", today);
-
-  if (statusUpdatesNextFollowup) {
-    statusUpdatesNextFollowup.forEach((r: any) => leadIds.add(r.lead_id));
-  }
-
-  // 4. Status updates with visit_date
-  const { data: statusUpdatesVisitDate } = await supabase
-    .from("lead_status_updates")
-    .select("lead_id")
-    .eq("company_id", scopedCompanyId)
-    .not("visit_date", "is", null)
-    .gte("visit_date", today);
-
-  if (statusUpdatesVisitDate) {
-    statusUpdatesVisitDate.forEach((r: any) => leadIds.add(r.lead_id));
-  }
-
-  return leadIds;
+function mapDashboardLead(row: any): DashboardLead {
+  return {
+    lead_id: row.lead_id,
+    full_name: row.full_name,
+    phone: row.phone,
+    email: row.email,
+    status_id: row.status_id,
+    status_name: row.status_name,
+    lead_source_id: row.lead_source_id,
+    source_name: row.source_name,
+    assigned_user_id: row.assigned_user_id,
+    assigned_user_name: row.assigned_user_name,
+    latest_followup_date: row.latest_followup_date,
+    latest_site_visit_date: row.latest_site_visit_date,
+    category: row.category,
+  };
 }
 
 export const leadRepository = {
@@ -298,120 +253,80 @@ export const leadRepository = {
       .eq("id", id);
   },
 
-  async countWithoutFollowup(
+  async countDashboardState(
     companyId: string,
-    _terminalStatusIds: string[],
-    scopedAssigneeIds: string[] | null = null,
+    scopedAssigneeIds: string[] | null,
     statusId?: string,
     leadSourceId?: string,
-  ): Promise<{ count: number; error: Error | null }> {
+    assignedUserId?: string,
+    search?: string,
+  ): Promise<{ counts: Record<string, number>; error: Error | null }> {
     const scopedCompanyId = requireCompanyId(companyId);
-
-    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
-      return { count: 0, error: null };
-    }
-
     const supabase = createClient();
 
-    const leadsWithNextAction = await getLeadIdsWithNextActionDate(
-      supabase,
-      scopedCompanyId,
-      scopedAssigneeIds,
-    );
-
-    // Fetch ALL scoped lead IDs, then filter in memory
-    // This matches the exact same logic as listWithoutFollowup
-    let query = supabase
-      .from("leads")
-      .select("id")
-      .eq("company_id", scopedCompanyId);
-
-    if (scopedAssigneeIds !== null) {
-      query = query.in("assigned_user_id", scopedAssigneeIds);
-    }
-
-    if (statusId) {
-      query = query.eq("status_id", statusId);
-    }
-
-    if (leadSourceId) {
-      query = query.eq("lead_source_id", leadSourceId);
-    }
-
-    const { data, error } = await query;
+    const { data, error } = await supabase.rpc("count_leads_dashboard_state", {
+      p_company_id: scopedCompanyId,
+      p_scoped_user_ids: scopedAssigneeIds,
+      p_status_id: statusId,
+      p_lead_source_id: leadSourceId,
+      p_assigned_user_id: assignedUserId,
+      p_search: search,
+    });
 
     if (error) {
-      return { count: 0, error: error as Error };
+      return { counts: {}, error: error as Error };
     }
 
-    const scopedLeadIds = (data ?? []).map((r: any) => r.id as string);
-    const count = scopedLeadIds.filter((id: string) => !leadsWithNextAction.has(id)).length;
+    const counts: Record<string, number> = {
+      overdue: 0,
+      due_today: 0,
+      site_visit_today: 0,
+      upcoming_followup: 0,
+      upcoming_site_visit: 0,
+      no_action: 0,
+    };
 
-    return { count, error: null };
+    (data ?? []).forEach((row: any) => {
+      counts[row.category] = Number(row.count);
+    });
+
+    return { counts, error: null };
   },
 
-  async listWithoutFollowup(
+  async listDashboardState(
     companyId: string,
-    _terminalStatusIds: string[],
-    scopedAssigneeIds: string[] | null = null,
+    scopedAssigneeIds: string[] | null,
+    category: string,
     page = 1,
     pageSize = 50,
     statusId?: string,
     leadSourceId?: string,
-  ): Promise<{ data: LeadListItem[] | null; error: Error | null; total?: number }> {
+    assignedUserId?: string,
+    search?: string,
+  ): Promise<{ data: DashboardLead[] | null; error: Error | null; total?: number }> {
     const scopedCompanyId = requireCompanyId(companyId);
-
-    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
-      return { data: [], error: null, total: 0 };
-    }
-
     const supabase = createClient();
 
-    const leadsWithNextAction = await getLeadIdsWithNextActionDate(
-      supabase,
-      scopedCompanyId,
-      scopedAssigneeIds,
-    );
-
-    // Fetch ALL scoped leads, then filter and paginate in memory
-    // This ensures count and list use the exact same logical result set
-    let query = supabase
-      .from("leads")
-      .select(LEAD_LIST_SELECT)
-      .eq("company_id", scopedCompanyId)
-      .order("created_at", { ascending: false });
-
-    if (scopedAssigneeIds !== null) {
-      query = query.in("assigned_user_id", scopedAssigneeIds);
-    }
-
-    if (statusId) {
-      query = query.eq("status_id", statusId);
-    }
-
-    if (leadSourceId) {
-      query = query.eq("lead_source_id", leadSourceId);
-    }
-
-    const { data, error } = await query;
+    const { data, error } = await supabase.rpc("get_leads_dashboard_state", {
+      p_company_id: scopedCompanyId,
+      p_scoped_user_ids: scopedAssigneeIds,
+      p_status_id: statusId,
+      p_lead_source_id: leadSourceId,
+      p_assigned_user_id: assignedUserId,
+      p_search: search,
+      p_category: category,
+      p_page: page,
+      p_page_size: pageSize,
+    });
 
     if (error) {
-      return { data: null, error };
+      return { data: null, error: error as Error };
     }
 
-    const rows = (data ?? []) as unknown as LeadListRow[];
-    const filtered = rows.filter((r) => !leadsWithNextAction.has(r.id));
+    const leads = (data ?? []).map(mapDashboardLead);
+    const total = data && data.length > 0 ? Number(data[0].total_count) : 0;
 
-    // Apply pagination to filtered results
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize;
-    const paginated = filtered.slice(from, to);
-
-    return {
-      data: paginated.map(mapListRow),
-      error: null,
-      total: filtered.length,
-    };
+    return { data: leads, error: null, total };
   },
 
   // Sprint 3A (F only): bounded recent lead creations for "Lead Created" events in timeline.

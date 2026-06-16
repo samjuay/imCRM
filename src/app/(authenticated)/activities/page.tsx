@@ -124,14 +124,14 @@ function ActivitiesContent() {
   useEffect(() => {
     if (!activeCard) return;
     if (!detailData || detailData.cardId !== activeCard) {
-      void loadDetail(activeCard);
+      void loadDetail(activeCard, activeCard === "leads-without-followup" ? localFilters : undefined);
     }
-  }, [activeCard, detailData?.cardId, loadDetail]);
+  }, [activeCard, detailData?.cardId, loadDetail, localFilters]);
 
   // Reload detail when filters change for Leads Without Next Action
   useEffect(() => {
     if (activeCard === "leads-without-followup" && detailData?.cardId === activeCard) {
-      void loadDetail(activeCard);
+      void loadDetail(activeCard, localFilters);
     }
   }, [localFilters, activeCard, detailData?.cardId, loadDetail]);
 
@@ -164,7 +164,6 @@ function ActivitiesContent() {
       {activeCard ? (
         <ActivitiesCardDetail
           cardId={activeCard}
-          items={detailData?.cardId === activeCard ? detailData.items : []}
           leads={detailData?.cardId === activeCard ? detailData.leads : []}
           isLoading={isDetailLoading}
           onBack={handleBack}

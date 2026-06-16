@@ -69,6 +69,10 @@ export type {
   LeadCreatedActivityItem,
   LeadAssignedActivityItem,
   BaseActivityItem,
+  // Dashboard types
+  DashboardLead,
+  DashboardCount,
+  DashboardState,
 } from "./lead";
 
 export type NavItem = {

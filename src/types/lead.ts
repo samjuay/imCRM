@@ -354,3 +354,35 @@ export type ActivityCounts = {
   upcomingFollowups: number;
   upcomingSiteVisits: number;
 };
+
+// Dashboard types (lead-centric)
+export type DashboardLead = {
+  lead_id: string;
+  full_name: string;
+  phone: string;
+  email: string;
+  status_id: string;
+  status_name: string;
+  lead_source_id: string;
+  source_name: string;
+  assigned_user_id: string;
+  assigned_user_name: string;
+  latest_followup_date: string;
+  latest_site_visit_date: string;
+  category: string;
+};
+
+export type DashboardCount = {
+  overdue: number;
+  due_today: number;
+  site_visit_today: number;
+  upcoming_followup: number;
+  upcoming_site_visit: number;
+  no_action: number;
+};
+
+export type DashboardState = {
+  counts: DashboardCount;
+  leads: DashboardLead[];
+  total: number;
+};

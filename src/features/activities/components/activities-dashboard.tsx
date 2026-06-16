@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type {
   ActivityCardId,
-  ActivityCounts,
+  DashboardCount,
   CompanyUser,
 } from "@/types";
 
@@ -14,55 +14,55 @@ const CARDS: {
   id: ActivityCardId;
   title: string;
   description: string;
-  countKey: keyof ActivityCounts;
+  countKey: keyof DashboardCount;
   variant: "destructive" | "default" | "outline";
 }[] = [
   {
     id: "overdue-followups",
     title: "Overdue Followups",
     description: "Immediate action required",
-    countKey: "overdueFollowups",
+    countKey: "overdue",
     variant: "destructive",
   },
   {
     id: "followups-today",
     title: "Followup Due Today",
     description: "Needs attention today",
-    countKey: "followupsToday",
+    countKey: "due_today",
     variant: "default",
   },
   {
     id: "leads-without-followup",
     title: "Leads Without Next Action",
     description: "Assign next action",
-    countKey: "leadsWithoutFollowup",
+    countKey: "no_action",
     variant: "outline",
   },
   {
     id: "site-visits-today",
     title: "Site Visits Today",
     description: "Scheduled for today",
-    countKey: "siteVisitsToday",
+    countKey: "site_visit_today",
     variant: "default",
   },
   {
     id: "upcoming-followups",
     title: "Upcoming Followups",
     description: "Next 7 days",
-    countKey: "upcomingFollowups",
+    countKey: "upcoming_followup",
     variant: "outline",
   },
   {
     id: "upcoming-site-visits",
     title: "Upcoming Site Visits",
     description: "Next 7 days",
-    countKey: "upcomingSiteVisits",
+    countKey: "upcoming_site_visit",
     variant: "outline",
   },
 ];
 
 type ActivitiesDashboardProps = {
-  counts: ActivityCounts;
+  counts: DashboardCount;
   companyUsers: CompanyUser[];
   onCardTap: (cardId: ActivityCardId) => void;
   onRefresh: () => void;

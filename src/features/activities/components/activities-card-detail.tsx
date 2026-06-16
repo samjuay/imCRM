@@ -12,11 +12,9 @@ import type {
   ActivityCardId,
   ActivityFilters,
   CompanyUser,
-  FollowupActivityItem,
-  LeadListItem,
+  DashboardLead,
   LeadSource,
   LeadStatus,
-  SiteVisitActivityItem,
 } from "@/types";
 
 const CARD_META: Record<ActivityCardId, { title: string }> = {
@@ -38,83 +36,13 @@ function formatDateTime(iso: string) {
   });
 }
 
-function FollowupRow({ item, onLeadClick }: { item: FollowupActivityItem; onLeadClick: () => void }) {
+function LeadRow({ lead, onLeadClick }: { lead: DashboardLead; onLeadClick: () => void }) {
   const router = useRouter();
   return (
     <motion.div
       whileTap={{ scale: 0.98 }}
       transition={{ duration: 0.1 }}
-      onClick={() => { onLeadClick(); router.push(`/leads/${item.lead_id}`); }}
-      className="rounded-lg border border-border bg-card p-3 cursor-pointer hover:bg-muted/30"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-primary">
-            {item.lead_full_name ?? "Lead"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {item.followup_type_name}
-          </p>
-        </div>
-        <Badge variant="outline" className="shrink-0">
-          {item.status}
-        </Badge>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {formatDateTime(item.followup_date)}
-      </p>
-      {item.remarks && (
-        <p className="mt-1 text-xs line-clamp-2">{item.remarks}</p>
-      )}
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        {item.assigned_user_name ?? "Unassigned"}
-      </p>
-    </motion.div>
-  );
-}
-
-function SiteVisitRow({ item, onLeadClick }: { item: SiteVisitActivityItem; onLeadClick: () => void }) {
-  const router = useRouter();
-  return (
-    <motion.div
-      whileTap={{ scale: 0.98 }}
-      transition={{ duration: 0.1 }}
-      onClick={() => { onLeadClick(); router.push(`/leads/${item.lead_id}`); }}
-      className="rounded-lg border border-border bg-card p-3 cursor-pointer hover:bg-muted/30"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-primary">
-            {item.lead_full_name ?? "Lead"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {item.project_name ?? "No project"}
-          </p>
-        </div>
-        <Badge variant="outline" className="shrink-0">
-          {item.visit_status}
-        </Badge>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {formatDateTime(item.visit_date)}
-      </p>
-      {item.remarks && (
-        <p className="mt-1 text-xs line-clamp-2">{item.remarks}</p>
-      )}
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        {item.assigned_user_name ?? "Unassigned"}
-      </p>
-    </motion.div>
-  );
-}
-
-function LeadRow({ lead, onLeadClick }: { lead: LeadListItem; onLeadClick: () => void }) {
-  const router = useRouter();
-  return (
-    <motion.div
-      whileTap={{ scale: 0.98 }}
-      transition={{ duration: 0.1 }}
-      onClick={() => { onLeadClick(); router.push(`/leads/${lead.id}`); }}
+      onClick={() => { onLeadClick(); router.push(`/leads/${lead.lead_id}`); }}
       className="rounded-lg border border-border bg-card p-3 cursor-pointer hover:bg-muted/30"
     >
       <div className="flex items-center justify-between gap-2">
@@ -145,8 +73,7 @@ function DetailSkeleton() {
 
 type ActivitiesCardDetailProps = {
   cardId: ActivityCardId;
-  items: (FollowupActivityItem | SiteVisitActivityItem)[];
-  leads: LeadListItem[];
+  leads: DashboardLead[];
   isLoading: boolean;
   onBack: () => void;
   onLeadClick: () => void;
@@ -160,7 +87,6 @@ type ActivitiesCardDetailProps = {
 
 export function ActivitiesCardDetail({
   cardId,
-  items,
   leads,
   isLoading,
   onBack,
@@ -173,10 +99,10 @@ export function ActivitiesCardDetail({
   companyUsers,
 }: ActivitiesCardDetailProps) {
   const meta = CARD_META[cardId];
-  const count = cardId === "leads-without-followup" ? leads.length : items.length;
+  const count = leads.length;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-var(--bottom-nav-height)-2rem)]">
+    <div className="flex flex-col h-[calc(100dvh-max(var(--bottom-nav-height, 0px)-env(safe-area-inset-bottom))-2rem)]">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background sticky top-0 z-10">
         <Button variant="ghost" size="icon" onClick={onBack}>
           <ArrowLeft className="size-4" />
@@ -204,33 +130,16 @@ export function ActivitiesCardDetail({
 
         {isLoading ? (
           <DetailSkeleton />
-        ) : cardId === "leads-without-followup" ? (
-          leads.length === 0 ? (
-            <LeadEmptyState
-              title="No leads without next action"
-              description="All active leads have followups scheduled."
-            />
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {leads.map((lead) => (
-                <LeadRow key={lead.id} lead={lead} onLeadClick={onLeadClick} />
-              ))}
-            </div>
-          )
-        ) : items.length === 0 ? (
+        ) : leads.length === 0 ? (
           <LeadEmptyState
-            title="No items"
-            description="Nothing to show for this category."
+            title="No leads without next action"
+            description="All active leads have followups scheduled."
           />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((item) =>
-              "visit_status" in item ? (
-                <SiteVisitRow key={item.id} item={item as SiteVisitActivityItem} onLeadClick={onLeadClick} />
-              ) : (
-                <FollowupRow key={item.id} item={item as FollowupActivityItem} onLeadClick={onLeadClick} />
-              ),
-            )}
+            {leads.map((lead) => (
+              <LeadRow key={lead.lead_id} lead={lead} onLeadClick={onLeadClick} />
+            ))}
           </div>
         )}
       </div>

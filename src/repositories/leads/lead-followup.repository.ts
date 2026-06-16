@@ -65,21 +65,6 @@ export const leadFollowupRepository = {
     };
   },
 
-  async create(companyId: string, input: CreateLeadFollowupInput) {
-    const scopedCompanyId = requireCompanyId(companyId);
-    const supabase = createClient();
-    return supabase
-      .from("lead_followups")
-      .insert({
-        ...input,
-        company_id: scopedCompanyId,
-        status: input.status ?? "pending",
-        outcome: "pending",
-      })
-      .select("id")
-      .single();
-  },
-
   async update(
     companyId: string,
     id: string,
@@ -94,60 +79,6 @@ export const leadFollowupRepository = {
       .eq("id", id)
       .select("id")
       .single();
-  },
-
-  // Sprint 3A: company-wide list for dashboard (A/B/D). Server date/status filters.
-  // Returns 3C fields (assigned_user_id/name, team_id, team_leader_id) for Sprint 3C.
-  // assigned/search may be post-filtered in small result sets for V1.
-  async countByCompany(
-    companyId: string,
-    filters: {
-      date_from?: string | undefined;
-      date_to?: string | undefined;
-      status?: FollowupStatus;
-      assigned_user_id?: string | undefined;
-    } = {},
-    scopedAssigneeIds: string[] | null = null,
-  ): Promise<{ count: number; error: Error | null }> {
-    const scopedCompanyId = requireCompanyId(companyId);
-
-    if (scopedAssigneeIds !== null && scopedAssigneeIds.length === 0) {
-      return { count: 0, error: null };
-    }
-
-    const supabase = createClient();
-
-    let query = supabase
-      .from("lead_followups")
-      .select(
-        `id,
-        leads( assigned_user_id )`,
-        { count: "exact" },
-      )
-      .eq("company_id", scopedCompanyId);
-
-    if (filters.date_from) {
-      query = query.gte("followup_date", filters.date_from);
-    }
-    if (filters.date_to) {
-      query = query.lte("followup_date", filters.date_to);
-    }
-    if (filters.status) {
-      query = query.eq("status", filters.status);
-    }
-    if (filters.assigned_user_id) {
-      query = query.eq("leads.assigned_user_id", filters.assigned_user_id);
-    } else if (scopedAssigneeIds !== null) {
-      query = query.in("leads.assigned_user_id", scopedAssigneeIds);
-    }
-
-    const { count, error } = await query;
-
-    if (error) {
-      return { count: 0, error: error as Error };
-    }
-
-    return { count: count ?? 0, error: null };
   },
 
   async listByCompany(
@@ -184,7 +115,7 @@ export const leadFollowupRepository = {
         { count: "exact" }
       )
       .eq("company_id", scopedCompanyId)
-      .order("followup_date", { ascending: true }) // good default for due/upcoming views
+      .order("followup_date", { ascending: true })
       .range(from, to);
 
     if (filters.date_from) {
@@ -197,14 +128,12 @@ export const leadFollowupRepository = {
       query = query.eq("status", filters.status);
     }
     if (filters.assigned_user_id) {
-      // Server filter via embedded lead (works with the relation in select)
       query = query.eq("leads.assigned_user_id", filters.assigned_user_id);
     } else if (scopedAssigneeIds !== null) {
       query = query.in("leads.assigned_user_id", scopedAssigneeIds);
     }
     if (filters.search?.trim()) {
       const term = `%${filters.search.trim()}%`;
-      // Basic lead name search via or (embedded)
       query = query.or(`leads.full_name.ilike.${term}`);
     }
 
@@ -231,7 +160,6 @@ export const leadFollowupRepository = {
         created_at: row.created_at,
         followup_type_name: normalizeRelation(row.followup_types)?.type_name,
         created_by_name: normalizeRelation(row.creator)?.full_name,
-        // 3C fields (required for Sprint 3C)
         assigned_user_id: lead?.assigned_user_id ?? null,
         assigned_user_name: assigned?.full_name ?? null,
         team_id: assigned?.team_id ?? null,
@@ -245,5 +173,20 @@ export const leadFollowupRepository = {
       error: null,
       total: count ?? mapped.length,
     };
+  },
+
+  async create(companyId: string, input: CreateLeadFollowupInput) {
+    const scopedCompanyId = requireCompanyId(companyId);
+    const supabase = createClient();
+    return supabase
+      .from("lead_followups")
+      .insert({
+        ...input,
+        company_id: scopedCompanyId,
+        status: input.status ?? "pending",
+        outcome: "pending",
+      })
+      .select("id")
+      .single();
   },
 };
