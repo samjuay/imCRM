@@ -711,30 +711,25 @@ async function startServer() {
 
       // Followups Query
       let fQuery = supabase.from('followups').select('id, lead_id, scheduled_at, user_id').eq('company_id', companyId).eq('completed', false);
-      if (role !== UserRole.COMPANY_ADMIN) {
-        if (activeLeadsIds.length > 0) {
-          fQuery = fQuery.in('lead_id', activeLeadsIds);
-        } else {
-          fQuery = fQuery.in('lead_id', []);
-        }
-      }
       const { data: pendingFollowups } = await fQuery;
-      const pendingList = pendingFollowups || [];
+      let pendingList = pendingFollowups || [];
+      if (role !== UserRole.COMPANY_ADMIN) {
+        const activeSet = new Set(activeLeadsIds);
+        pendingList = pendingList.filter(f => activeSet.has(f.lead_id));
+      }
 
       // Leads without followup (exclude those with pending followups OR active/scheduled site visits)
       let activeSvQuery = supabase.from('site_visits')
         .select('lead_id')
         .eq('company_id', companyId)
         .in('status', ['scheduled', 'confirmed']);
-      if (role !== UserRole.COMPANY_ADMIN) {
-        if (activeLeadsIds.length > 0) {
-          activeSvQuery = activeSvQuery.in('lead_id', activeLeadsIds);
-        } else {
-          activeSvQuery = activeSvQuery.in('lead_id', []);
-        }
-      }
       const { data: activeSiteVisits } = await activeSvQuery;
-      const activeSvLeadIds = new Set((activeSiteVisits || []).map(sv => sv.lead_id));
+      let activeSiteVisitsFiltered = activeSiteVisits || [];
+      if (role !== UserRole.COMPANY_ADMIN) {
+        const activeSet = new Set(activeLeadsIds);
+        activeSiteVisitsFiltered = activeSiteVisitsFiltered.filter(sv => activeSet.has(sv.lead_id));
+      }
+      const activeSvLeadIds = new Set(activeSiteVisitsFiltered.map(sv => sv.lead_id));
 
       const pendingFollowupLeadIds = new Set(pendingList.map(f => f.lead_id));
       const leadsWithoutFollowup = (activeLeads || []).filter(l => !pendingFollowupLeadIds.has(l.id) && !activeSvLeadIds.has(l.id)).length;
@@ -753,15 +748,12 @@ async function startServer() {
 
       // Site visits stats
       let svQuery = supabase.from('site_visits').select('id, lead_id, scheduled_date, user_id').eq('company_id', companyId).neq('status', 'cancelled');
-      if (role !== UserRole.COMPANY_ADMIN) {
-        if (activeLeadsIds.length > 0) {
-          svQuery = svQuery.in('lead_id', activeLeadsIds);
-        } else {
-          svQuery = svQuery.in('lead_id', []);
-        }
-      }
       const { data: visits } = await svQuery;
-      const visitsList = visits || [];
+      let visitsList = visits || [];
+      if (role !== UserRole.COMPANY_ADMIN) {
+        const activeSet = new Set(activeLeadsIds);
+        visitsList = visitsList.filter(sv => activeSet.has(sv.lead_id));
+      }
 
       const siteVisitsToday = visitsList.filter(sv => sv.scheduled_date === todayStr).length;
       const upcomingSiteVisits = visitsList.filter(sv => sv.scheduled_date >= tomorrowStr && sv.scheduled_date <= sevenDaysLaterStr).length;
@@ -851,14 +843,12 @@ async function startServer() {
         const activeLeadsIds = (activeLeads || []).map(l => l.id);
 
         let svQuery = supabase.from('site_visits').select('*').eq('company_id', companyId).neq('status', 'cancelled');
-        if (role !== UserRole.COMPANY_ADMIN && activeLeadsIds.length > 0) {
-          svQuery = svQuery.in('lead_id', activeLeadsIds);
-        } else if (role !== UserRole.COMPANY_ADMIN) {
-          svQuery = svQuery.in('lead_id', []);
-        }
-
         const { data: visits } = await svQuery;
         let visitsList = visits || [];
+        if (role !== UserRole.COMPANY_ADMIN) {
+          const activeSet = new Set(activeLeadsIds);
+          visitsList = visitsList.filter(sv => activeSet.has(sv.lead_id));
+        }
         
         if (cardId === 'siteVisitsToday') {
           visitsList = visitsList.filter(sv => sv.scheduled_date === todayStr);
@@ -892,14 +882,13 @@ async function startServer() {
       const activeLeadsIds = (activeLeads || []).map(l => l.id);
 
       let fQuery = supabase.from('followups').select('*').eq('company_id', companyId).eq('completed', false);
-      if (role !== UserRole.COMPANY_ADMIN && activeLeadsIds.length > 0) {
-        fQuery = fQuery.in('lead_id', activeLeadsIds);
-      } else if (role !== UserRole.COMPANY_ADMIN) {
-        fQuery = fQuery.in('lead_id', []);
-      }
-
       const { data: followups } = await fQuery;
       let rawList = followups || [];
+
+      if (role !== UserRole.COMPANY_ADMIN) {
+        const activeSet = new Set(activeLeadsIds);
+        rawList = rawList.filter(f => activeSet.has(f.lead_id));
+      }
 
       if (cardId === 'followupsDueToday') {
         rawList = rawList.filter(f => f.scheduled_at.split('T')[0] === todayStr);
