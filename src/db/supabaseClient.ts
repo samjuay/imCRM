@@ -16,8 +16,27 @@ let adminClientInstance: SupabaseClient | null = null;
  */
 export function getBrowserSupabase(): SupabaseClient {
   if (!browserClientInstance) {
-    const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
-    const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+    let supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+    let supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.log('[Login Audit] VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing from env. Falling back to sync server config fetch...');
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', '/api/config', false); // Sync call
+        xhr.send(null);
+        if (xhr.status === 200) {
+          const config = JSON.parse(xhr.responseText);
+          supabaseUrl = config.supabaseUrl;
+          supabaseAnonKey = config.supabaseAnonKey;
+          console.log('[Login Audit] Successfully fetched config dynamically from server.');
+        } else {
+          console.error('[Login Audit] Failed to fetch sync config from server:', xhr.status, xhr.statusText);
+        }
+      } catch (err) {
+        console.error('[Login Audit] Error during synchronous config fetch:', err);
+      }
+    }
 
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error(

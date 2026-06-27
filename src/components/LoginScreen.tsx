@@ -9,6 +9,7 @@ import {
   KeyRound, Mail, Shield, Users, Eye, EyeOff, AlertCircle, CheckCircle, ArrowLeft, RefreshCw, Lock
 } from 'lucide-react';
 import ImCrmLogo from './ImCrmLogo';
+import { getBrowserSupabase } from '../db/supabaseClient';
 
 export default function LoginScreen() {
   const { login } = useAppStore();
@@ -33,25 +34,117 @@ export default function LoginScreen() {
   // Recovery Token state
   const [recoveryToken, setRecoveryToken] = useState<string | null>(null);
 
-  // Parse hash parameters for password recovery redirection
+  // Parse parameters for password recovery redirection and handle session setup (PKCE and Implicit tokens)
   useEffect(() => {
-    const handleHash = () => {
-      const hash = window.location.hash;
-      if (hash) {
-        const params = new URLSearchParams(hash.replace('#', '?'));
-        const accessToken = params.get('access_token');
-        const type = params.get('type');
-        if (type === 'recovery' && accessToken) {
-          setRecoveryToken(accessToken);
-          setView('reset');
-          setSuccessMessage('Secure recovery link validated. Please enter your new password.');
-          // Clear hash to protect the token and prevent redundant loops
-          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    const checkRecovery = async () => {
+      try {
+        const supabase = getBrowserSupabase();
+        
+        // 1. Check if a session already exists and we came from a recovery redirect
+        const { data: { session: existingSession } } = await supabase.auth.getSession();
+        
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code');
+        const hash = window.location.hash;
+        
+        let hashToken = null;
+        let hashType = null;
+        if (hash) {
+          const hashParams = new URLSearchParams(hash.replace('#', '?'));
+          hashToken = hashParams.get('access_token');
+          hashType = hashParams.get('type');
         }
+
+        const isRecoveryUrl = 
+          !!code || 
+          hashType === 'recovery' || 
+          hash.includes('type=recovery') || 
+          searchParams.get('type') === 'recovery' ||
+          !!searchParams.get('token') ||
+          !!searchParams.get('access_token');
+
+        if (isRecoveryUrl) {
+          setIsLoading(true);
+          setLocalError(null);
+          setSuccessMessage('Establishing secure recovery session...');
+
+          let activeSession = existingSession;
+
+          // If we have a PKCE code in the URL, exchange it
+          if (code) {
+            console.log('[Recovery Audit] Exchanging PKCE code for session...');
+            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+            if (error) {
+              console.error('[Recovery Audit] PKCE code exchange failed:', error.message);
+              setLocalError(`Recovery link verification failed: ${error.message}`);
+              setIsLoading(false);
+              return;
+            }
+            if (data?.session) {
+              activeSession = data.session;
+            }
+          } 
+          // If we have a hash token, set the session
+          else if (hashToken) {
+            console.log('[Recovery Audit] Setting session via hash access token...');
+            const { data, error } = await supabase.auth.setSession({
+              access_token: hashToken,
+              refresh_token: ''
+            });
+            if (error) {
+              console.error('[Recovery Audit] Hash token session setup failed:', error.message);
+              setLocalError(`Recovery session setup failed: ${error.message}`);
+              setIsLoading(false);
+              return;
+            }
+            if (data?.session) {
+              activeSession = data.session;
+            }
+          }
+          // If we have access_token or token in query params, set the session
+          else {
+            const queryToken = searchParams.get('access_token') || searchParams.get('token');
+            if (queryToken) {
+              console.log('[Recovery Audit] Setting session via query access token...');
+              const { data, error } = await supabase.auth.setSession({
+                access_token: queryToken,
+                refresh_token: ''
+              });
+              if (error) {
+                console.error('[Recovery Audit] Query token session setup failed:', error.message);
+                setLocalError(`Recovery session setup failed: ${error.message}`);
+                setIsLoading(false);
+                return;
+              }
+              if (data?.session) {
+                activeSession = data.session;
+              }
+            }
+          }
+
+          // Verify if we have an active session now
+          if (activeSession) {
+            console.log('[Recovery Audit] Recovery session successfully established:', activeSession.user?.email);
+            setRecoveryToken(activeSession.access_token);
+            setView('reset');
+            setSuccessMessage('Secure recovery session established. Please enter your new password.');
+            // Clear URL params and hash to clean up browser history and prevent replay attempts
+            window.history.replaceState(null, '', window.location.pathname);
+          } else {
+            console.warn('[Recovery Audit] No session was established from recovery URL.');
+            setLocalError('Unable to establish a recovery session. The link may have expired or already been used.');
+          }
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        console.error('[Recovery Audit] Unexpected exception during recovery check:', err);
+        setLocalError('An unexpected error occurred during link verification.');
+        setIsLoading(false);
       }
     };
 
-    handleHash();
+    checkRecovery();
+
     // Pre-fill email if "Remember Me" was previously activated
     const rememberedEmail = localStorage.getItem('imcrm_remembered_email');
     const isRemembered = localStorage.getItem('imcrm_remember_me') === 'true';
@@ -154,7 +247,7 @@ export default function LoginScreen() {
     }
   };
 
-  // Submit new password update
+  // Submit new password update (handled completely securely client-side via Supabase JS SDK)
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPassword || !confirmPassword) {
@@ -170,8 +263,12 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!recoveryToken) {
-      setLocalError('Reset link expired.');
+    const supabase = getBrowserSupabase();
+
+    // Verify a valid session exists first (Requirement 4)
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setLocalError('No active recovery session found. Please click your recovery link again.');
       return;
     }
 
@@ -180,25 +277,25 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          password: newPassword,
-          token: recoveryToken
-        })
-      });
+      // Call updateUser directly on browser client to perform password update (Requirement 4)
+      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setLocalError(data.error || 'Reset link expired.');
+      if (updateErr) {
+        console.error('[Reset Password Error] Failed to update password on client:', updateErr.message);
+        setLocalError(updateErr.message);
+        setIsLoading(false);
         return;
       }
 
-      setSuccessMessage('Password updated successfully. Redirecting to Login...');
+      console.log('[Reset Password] Password successfully updated on client.');
+      setSuccessMessage('Password updated successfully. Securely signing out and redirecting to Login...');
+      
       setNewPassword('');
       setConfirmPassword('');
       setRecoveryToken(null);
+
+      // Sign out to clear the temporary recovery session so the user can login cleanly with their new password (Requirement 7)
+      await supabase.auth.signOut();
       
       // Delay navigation back to login
       setTimeout(() => {
@@ -206,8 +303,9 @@ export default function LoginScreen() {
         setView('login');
       }, 3000);
 
-    } catch (err) {
-      setLocalError('Unable to connect.');
+    } catch (err: any) {
+      console.error('[Reset Password Error] Unexpected exception during reset:', err);
+      setLocalError('Unable to update password. Please try again.');
     } finally {
       setIsLoading(false);
     }
