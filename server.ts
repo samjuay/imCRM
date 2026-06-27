@@ -11,6 +11,7 @@ import { getSupabase, getSupabaseAdmin, getServerUserSupabase } from './src/db/s
 import { UserRole, LeadStatus, ColdStatus, SiteVisitStatus, Lead, ColdData } from './src/types';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -710,17 +711,29 @@ async function startServer() {
 
       // Followups Query
       let fQuery = supabase.from('followups').select('id, lead_id, scheduled_at, user_id').eq('company_id', companyId).eq('completed', false);
-      if (role !== UserRole.COMPANY_ADMIN && activeLeadsIds.length > 0) {
-        fQuery = fQuery.in('lead_id', activeLeadsIds);
+      if (role !== UserRole.COMPANY_ADMIN) {
+        if (activeLeadsIds.length > 0) {
+          fQuery = fQuery.in('lead_id', activeLeadsIds);
+        } else {
+          fQuery = fQuery.in('lead_id', []);
+        }
       }
       const { data: pendingFollowups } = await fQuery;
       const pendingList = pendingFollowups || [];
 
       // Leads without followup (exclude those with pending followups OR active/scheduled site visits)
-      const { data: activeSiteVisits } = await supabase.from('site_visits')
+      let activeSvQuery = supabase.from('site_visits')
         .select('lead_id')
         .eq('company_id', companyId)
         .in('status', ['scheduled', 'confirmed']);
+      if (role !== UserRole.COMPANY_ADMIN) {
+        if (activeLeadsIds.length > 0) {
+          activeSvQuery = activeSvQuery.in('lead_id', activeLeadsIds);
+        } else {
+          activeSvQuery = activeSvQuery.in('lead_id', []);
+        }
+      }
+      const { data: activeSiteVisits } = await activeSvQuery;
       const activeSvLeadIds = new Set((activeSiteVisits || []).map(sv => sv.lead_id));
 
       const pendingFollowupLeadIds = new Set(pendingList.map(f => f.lead_id));
@@ -740,8 +753,12 @@ async function startServer() {
 
       // Site visits stats
       let svQuery = supabase.from('site_visits').select('id, lead_id, scheduled_date, user_id').eq('company_id', companyId).neq('status', 'cancelled');
-      if (role !== UserRole.COMPANY_ADMIN && activeLeadsIds.length > 0) {
-        svQuery = svQuery.in('lead_id', activeLeadsIds);
+      if (role !== UserRole.COMPANY_ADMIN) {
+        if (activeLeadsIds.length > 0) {
+          svQuery = svQuery.in('lead_id', activeLeadsIds);
+        } else {
+          svQuery = svQuery.in('lead_id', []);
+        }
       }
       const { data: visits } = await svQuery;
       const visitsList = visits || [];
@@ -750,10 +767,15 @@ async function startServer() {
       const upcomingSiteVisits = visitsList.filter(sv => sv.scheduled_date >= tomorrowStr && sv.scheduled_date <= sevenDaysLaterStr).length;
 
       // Programmatic counts of database records for Phase 6 Diagnostics
+      let totalLeadsQuery = supabase.from('leads').select('id', { count: 'exact', head: true }).eq('company_id', companyId);
+      if (scopedUserIds) {
+        totalLeadsQuery = totalLeadsQuery.in('assigned_to', scopedUserIds);
+      }
+
       const [usersCountRes, teamsCountRes, leadsCountRes, sourcesCountRes] = await Promise.all([
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
         supabase.from('teams').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
-        supabase.from('leads').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
+        totalLeadsQuery,
         supabase.from('lead_sources').select('id', { count: 'exact', head: true }).eq('company_id', companyId)
       ]);
 
@@ -1961,6 +1983,52 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+
+  // --- 6.5 PWA STATIC FILE ROUTING (PREVENT SPA INTERCEPTION) ---
+  app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
+    res.setHeader('Content-Type', 'application/manifest+json');
+    const p1 = path.join(process.cwd(), 'dist', 'manifest.json');
+    const p2 = path.join(process.cwd(), 'public', 'manifest.json');
+    if (fs.existsSync(p1)) return res.sendFile(p1);
+    if (fs.existsSync(p2)) return res.sendFile(p2);
+    return res.status(404).send('Manifest not found');
+  });
+
+  app.get(['/sw.js', '/service-worker.js'], (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    const p1 = path.join(process.cwd(), 'dist', 'sw.js');
+    const p2 = path.join(process.cwd(), 'public', 'sw.js');
+    if (fs.existsSync(p1)) return res.sendFile(p1);
+    if (fs.existsSync(p2)) return res.sendFile(p2);
+    return res.status(404).send('Service worker not found');
+  });
+
+  app.get('/favicon.ico', (req, res) => {
+    const p1 = path.join(process.cwd(), 'dist', 'favicon.ico');
+    const p2 = path.join(process.cwd(), 'public', 'favicon.ico');
+    if (fs.existsSync(p1)) return res.sendFile(p1);
+    if (fs.existsSync(p2)) return res.sendFile(p2);
+    return res.status(404).send('Favicon not found');
+  });
+
+  app.get('/icons/*', (req, res) => {
+    const relativePath = req.params[0];
+    const p1 = path.join(process.cwd(), 'dist', 'icons', relativePath);
+    const p2 = path.join(process.cwd(), 'public', 'icons', relativePath);
+    if (fs.existsSync(p1)) return res.sendFile(p1);
+    if (fs.existsSync(p2)) return res.sendFile(p2);
+    return res.status(404).send('Icon not found');
+  });
+
+  app.get('/assets/*', (req, res) => {
+    const relativePath = req.params[0];
+    const p1 = path.join(process.cwd(), 'dist', 'assets', relativePath);
+    const p2 = path.join(process.cwd(), 'public', 'assets', relativePath);
+    if (fs.existsSync(p1)) return res.sendFile(p1);
+    if (fs.existsSync(p2)) return res.sendFile(p2);
+    return res.status(404).send('Asset not found');
   });
 
 
