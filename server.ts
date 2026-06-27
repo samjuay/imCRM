@@ -7,7 +7,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
-import { getSupabase, getSupabaseAdmin } from './src/db/supabaseClient';
+import { getSupabase, getSupabaseAdmin, getServerUserSupabase } from './src/db/supabaseClient';
 import { UserRole, LeadStatus, ColdStatus, SiteVisitStatus, Lead, ColdData } from './src/types';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -257,7 +257,8 @@ async function bootstrapDatabase() {
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   const PORT = 3000;
 
@@ -369,60 +370,24 @@ async function startServer() {
     const emailLower = email.toLowerCase().trim();
 
     try {
-      const supabase = getSupabase();
+      const userSupabase = getServerUserSupabase();
       const adminSupabase = getSupabaseAdmin();
 
-      // 1. Resilient local credential matching for demo accounts or registered fallback profiles
-      if (password === 'password') {
-        const { data: user, error: profileErr } = await adminSupabase
-          .from('profiles')
-          .select('*')
-          .eq('email', emailLower)
-          .maybeSingle();
-
-        if (user) {
-          console.log(`[Login Audit] Resilient Local login MATCHED profile for ${emailLower}`);
-          if (!user.is_active) {
-            console.log('[Login Audit] Error: Profile is inactive.');
-            return res.status(401).json({ error: 'User account is inactive.' });
-          }
-          console.log('[Login Audit] Resilient login successfully completed.');
-          return res.json({ token: user.id, user });
-        }
-      }
-
-      // 2. Otherwise/Fallback: Perform genuine Supabase Auth
-      console.log('[Login Audit] Calling supabase.auth.signInWithPassword...');
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      // 1. Perform genuine Supabase Auth via the Server User Client (ANON key, non-admin)
+      console.log('[Login Audit] Calling userSupabase.auth.signInWithPassword...');
+      const { data: authData, error: authError } = await userSupabase.auth.signInWithPassword({
         email: emailLower,
         password
       });
 
       if (authError) {
-        console.log(`[Login Audit] Auth credentials verified via redirect fallback loop with message: "${authError.message}"`);
-        
-        // 100% Resilient fallback: If a profile exists in the database under this email,
-        // we override the authentication failure to grant access, preventing config blocks.
-        const { data: user } = await adminSupabase
-          .from('profiles')
-          .select('*')
-          .eq('email', emailLower)
-          .maybeSingle();
-
-        if (user) {
-          console.log(`[Login Audit] Resilient profile-matching fallback matched for "${emailLower}". Bypassing any credentials warning.`);
-          if (!user.is_active) {
-            return res.status(401).json({ error: 'User account is inactive.' });
-          }
-          return res.json({ token: user.id, user });
-        }
-
+        console.log(`[Login Audit] Authentication failed via signInWithPassword: "${authError.message}"`);
         return res.status(401).json({ error: `Authentication failed: ${authError.message}` });
       }
 
       console.log(`[Login Audit] signInWithPassword successfully completed. Authenticated user ID: ${authData.user?.id}`);
 
-      // Lookup the matching profile in public profiles table
+      // 2. Lookup the matching profile in public profiles table
       console.log(`[Login Audit] Looking up public profile for user ID: ${authData.user?.id}`);
       const { data: user, error: profileError } = await adminSupabase
         .from('profiles')
@@ -431,7 +396,7 @@ async function startServer() {
         .maybeSingle();
 
       if (profileError) {
-        console.log(`[Login Audit] profileLookup processed with warning: "${profileError.message}"`);
+        console.log(`[Login Audit] profileLookup processed with error: "${profileError.message}"`);
         return res.status(500).json({ error: `Profile lookup processed with error: ${profileError.message}` });
       }
 
@@ -481,8 +446,8 @@ async function startServer() {
         return res.status(404).json({ error: 'Incorrect email or password.' }); // Or 'Email address not found in system.'
       }
 
-      const supabase = getSupabase();
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(emailLower, {
+      const userSupabase = getServerUserSupabase();
+      const { error: resetErr } = await userSupabase.auth.resetPasswordForEmail(emailLower, {
         redirectTo: redirectTo || 'https://ais-dev-siyh6mcbl3q4mjir6camse-920358558370.asia-east1.run.app'
       });
 

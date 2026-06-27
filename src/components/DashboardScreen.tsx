@@ -60,7 +60,8 @@ export default function DashboardScreen() {
     offlineMode,
     projects,
     fetchProjects,
-    setActiveTab
+    setActiveTab,
+    darkMode
   } = useAppStore();
 
   const [activeDrawerCard, setActiveDrawerCard] = useState<string | null>(null);
@@ -376,7 +377,7 @@ export default function DashboardScreen() {
   return (
     <div className="flex flex-col space-y-5 select-none scroll-smooth pb-28">
       {/* Daily Performance Pitch banner */}
-      <div className="rounded-[24px] neu-flat p-5 flex items-center justify-between border border-border-color bg-gradient-to-br from-white to-slate-50 relative overflow-hidden">
+      <div className={`rounded-[24px] neu-flat p-5 flex items-center justify-between border border-border-color relative overflow-hidden ${darkMode ? 'bg-gradient-to-br from-[#101B2B] to-[#0D1622]' : 'bg-gradient-to-br from-white to-slate-50'}`}>
         <div className="space-y-1 relative z-10">
           <p className="text-[10px] uppercase font-bold text-premium-gold tracking-widest font-display">Command Center</p>
           <h2 className="text-base font-display font-bold text-primary-navy tracking-tight">

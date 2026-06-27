@@ -5,63 +5,89 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-let supabaseInstance: SupabaseClient | null = null;
-let supabaseAdminInstance: SupabaseClient | null = null;
+let browserClientInstance: SupabaseClient | null = null;
+let serverUserClientInstance: SupabaseClient | null = null;
+let adminClientInstance: SupabaseClient | null = null;
 
 /**
- * Lazy initializer for Supabase client.
- * Prevents application crash on startup if keys are not yet configured.
+ * 1. Browser Client
+ * Strictly uses frontend-safe environment variables (VITE_ prefixed / import.meta.env).
+ * For frontend usage only.
  */
-export function getSupabase(): SupabaseClient {
-  // If we are on the server/connected side and have service_role, automatically promote getSupabase to admin client
-  // to avoid RLS policy blocks on complex nested inserts/queries, while relying on explicit program schema scoping.
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || (import.meta as any).env?.VITE_SUPABASE_SERVICE_ROLE_KEY;
-  if (serviceRoleKey) {
-    return getSupabaseAdmin();
-  }
-
-  if (!supabaseInstance) {
-    const supabaseUrl = process.env.SUPABASE_URL || (import.meta as any).env?.VITE_SUPABASE_URL;
-    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
-
-    console.log('[Login Audit] Initializing Supabase client instance...');
-    console.log(`[Login Audit] SUPABASE_URL: ${supabaseUrl ? 'LOADED SUCCESSFULLY (' + supabaseUrl.substring(0, 15) + '...)' : 'MISSING'}`);
-    console.log(`[Login Audit] SUPABASE_ANON_KEY: ${supabaseAnonKey ? 'LOADED SUCCESSFULLY (' + supabaseAnonKey.substring(0, 10) + '...)' : 'MISSING'}`);
+export function getBrowserSupabase(): SupabaseClient {
+  if (!browserClientInstance) {
+    const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+    const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error(
-        'Supabase URL and Anon Key are required environment variables to run in connected mode. ' +
-        'Please add SUPABASE_URL and SUPABASE_ANON_KEY to your environment/secrets.'
+        'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be configured for the Browser Client.'
       );
     }
-    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
-    console.log('[Login Audit] Supabase client instance successfully created.');
+    browserClientInstance = createClient(supabaseUrl, supabaseAnonKey);
+    console.log('[Login Audit] Browser Supabase Client successfully initialized.');
   }
-  return supabaseInstance;
+  return browserClientInstance;
 }
 
 /**
- * Lazy initializer for Supabase Admin client with service_role privileges.
+ * 2. Server User Client
+ * Strictly uses backend/server environment variables (process.env) with the ANON_KEY.
+ * Used for all backend authentication and normal user operations (preventing service_role issues).
+ */
+export function getServerUserSupabase(): SupabaseClient {
+  if (!serverUserClientInstance) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error(
+        'SUPABASE_URL and SUPABASE_ANON_KEY must be configured for the Server User Client.'
+      );
+    }
+    serverUserClientInstance = createClient(supabaseUrl, supabaseAnonKey);
+    console.log('[Login Audit] Server User Supabase Client successfully initialized.');
+  }
+  return serverUserClientInstance;
+}
+
+/**
+ * 3. Admin Client
+ * Strictly uses backend/server environment variables (process.env) with the service_role key.
+ * Used ONLY for privileged backend admin operations (creating, deleting users, etc.).
  */
 export function getSupabaseAdmin(): SupabaseClient {
-  if (!supabaseAdminInstance) {
-    const supabaseUrl = process.env.SUPABASE_URL || (import.meta as any).env?.VITE_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || (import.meta as any).env?.VITE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!adminClientInstance) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !serviceRoleKey) {
-      console.warn('getSupabaseAdmin was called but SUPABASE_SERVICE_ROLE_KEY is missing. Using the default client fallback.');
-      return getSupabase();
+      console.warn('getSupabaseAdmin was called but SUPABASE_SERVICE_ROLE_KEY is missing. Using the Server User Client fallback.');
+      return getServerUserSupabase();
     }
-    
-    supabaseAdminInstance = createClient(supabaseUrl, serviceRoleKey, {
+    adminClientInstance = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
       }
     });
-    console.log('[Login Audit] Supabase admin instance successfully created using service_role key.');
+    console.log('[Login Audit] Admin Supabase Client successfully initialized using service_role key.');
   }
-  return supabaseAdminInstance;
+  return adminClientInstance;
+}
+
+/**
+ * Lazy initializer for Supabase client.
+ * Maintained for backward compatibility for simple DB queries on the server.
+ * Promotes to Admin Client on the server to bypass Row Level Security policies for general tables.
+ * CRITICAL: This is NEVER used for session/auth operations!
+ */
+export function getSupabase(): SupabaseClient {
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceRoleKey) {
+    return getSupabaseAdmin();
+  }
+  return getServerUserSupabase();
 }
 
 /**

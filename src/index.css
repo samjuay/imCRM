@@ -107,6 +107,15 @@ body {
   background-color: #0B121C !important;
   color: #F8FAFC !important;
   border-color: #070D16 !important;
+
+  /* Override ImCRM Color System variables for Dark Mode */
+  --color-primary-navy: #F8FAFC;
+  --color-card-bg: #101B2B;
+  --color-input-bg: #0D1622;
+  --color-border-color: #1C2D42;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #94A3B8;
+  --color-soft-gold: #C9A24D;
 }
 .dark-mode-container main {
   background: #070D16 !important;
@@ -136,10 +145,21 @@ body {
 .dark-mode-container .bg-white, .dark-mode-container .bg-card-bg {
   background-color: #101B2B !important;
 }
-.dark-mode-container .bg-[#F1F5F9], .dark-mode-container .bg-slate-100, .dark-mode-container .bg-[#F5F7FA], .dark-mode-container .bg-slate-50 {
+.dark-mode-container .bg-\[\#F1F5F9\], 
+.dark-mode-container .bg-slate-100, 
+.dark-mode-container .bg-\[\#F5F7FA\], 
+.dark-mode-container .bg-slate-50,
+.dark-mode-container .bg-\[\#F8FAFC\] {
   background-color: #070D16 !important;
 }
-.dark-mode-container .text-primary-navy, .dark-mode-container .text-[#0B1F33], .dark-mode-container .text-slate-900 {
+.dark-mode-container .text-primary-navy, 
+.dark-mode-container .text-\[\#0B1F33\], 
+.dark-mode-container .text-slate-900,
+.dark-mode-container .text-\[\#0B1F33\]\/60 {
+  color: #F8FAFC !important;
+}
+.dark-mode-container .bg-\[\#0B1F33\]\/5 {
+  background-color: rgba(255, 255, 255, 0.1) !important;
   color: #F8FAFC !important;
 }
 .dark-mode-container .text-slate-600, .dark-mode-container .text-text-secondary {
@@ -157,16 +177,39 @@ body {
   background-color: #101B2B !important;
   color: #F8FAFC !important;
 }
-.dark-mode-container .bg-emerald-50, .dark-mode-container .bg-green-50, .dark-mode-container .bg-green-50\/50 {
-  background-color: rgba(22, 163, 74, 0.1) !important;
+.dark-mode-container .bg-emerald-50, 
+.dark-mode-container .bg-green-50, 
+.dark-mode-container .bg-green-50\/50,
+.dark-mode-container .bg-emerald-100,
+.dark-mode-container .bg-green-100 {
+  background-color: rgba(22, 163, 74, 0.15) !important;
   color: #4ADE80 !important;
 }
-.dark-mode-container .bg-red-50, .dark-mode-container .bg-red-100 {
-  background-color: rgba(220, 38, 38, 0.1) !important;
+.dark-mode-container .text-emerald-800,
+.dark-mode-container .text-green-800 {
+  color: #4ADE80 !important;
+}
+.dark-mode-container .bg-red-50, 
+.dark-mode-container .bg-red-100,
+.dark-mode-container .bg-rose-50,
+.dark-mode-container .bg-rose-100 {
+  background-color: rgba(220, 38, 38, 0.15) !important;
   color: #F87171 !important;
 }
-.dark-mode-container .bg-amber-50, .dark-mode-container .bg-yellow-50 {
-  background-color: rgba(245, 158, 11, 0.1) !important;
+.dark-mode-container .text-red-600,
+.dark-mode-container .text-rose-600 {
+  color: #F87171 !important;
+}
+.dark-mode-container .bg-amber-50, 
+.dark-mode-container .bg-yellow-50,
+.dark-mode-container .bg-amber-100,
+.dark-mode-container .bg-yellow-100 {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+  color: #FBBF24 !important;
+}
+.dark-mode-container .text-warning,
+.dark-mode-container .text-amber-800,
+.dark-mode-container .text-yellow-800 {
   color: #FBBF24 !important;
 }
 
