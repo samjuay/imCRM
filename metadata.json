@@ -1,0 +1,6 @@
+{
+  "name": "ImCRM",
+  "description": "Premium mobile-first Real Estate CRM, inventory management, and team performance tracking platform featuring Soft Neumorphism design.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

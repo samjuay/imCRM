@@ -1,0 +1,129 @@
+{
+  "companies": [
+    {
+      "id": "99999999-9999-9999-9999-999999999999",
+      "name": "ImCRM Operations",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    }
+  ],
+  "users": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "full_name": "ImCRM Admin",
+      "phone": "+91 99999 88888",
+      "email": "admin@imcrm.co",
+      "role": "company_admin",
+      "is_active": true,
+      "avatar_url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=250&auto=format&fit=crop",
+      "password": "password",
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "full_name": "ImCRM Leader",
+      "phone": "+91 99999 77777",
+      "email": "leader@imcrm.co",
+      "role": "team_leader",
+      "team_id": "team-alpha",
+      "is_active": true,
+      "avatar_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=250&auto=format&fit=crop",
+      "password": "password",
+      "created_at": "2026-06-02T00:00:00.000Z",
+      "updated_at": "2026-06-02T00:00:00.000Z"
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "full_name": "ImCRM Sales Executive",
+      "phone": "+91 99999 66666",
+      "email": "sales@imcrm.co",
+      "role": "sales_executive",
+      "team_id": "team-alpha",
+      "is_active": true,
+      "avatar_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=250&auto=format&fit=crop",
+      "password": "password",
+      "created_at": "2026-06-03T00:00:00.000Z",
+      "updated_at": "2026-06-03T00:00:00.000Z"
+    }
+  ],
+  "teams": [
+    {
+      "id": "team-alpha",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Alpha Sales Team",
+      "team_leader_id": "22222222-2222-2222-2222-222222222222",
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    }
+  ],
+  "lead_sources": [
+    {
+      "id": "s-builder",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Builder Website",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-referral",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Referral",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-cold",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Cold Call",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-portal",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Portal",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-social",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Social Media",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-walkin",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Walk-in",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    },
+    {
+      "id": "s-other",
+      "company_id": "99999999-9999-9999-9999-999999999999",
+      "name": "Other",
+      "is_active": true,
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "updated_at": "2026-06-01T00:00:00.000Z"
+    }
+  ],
+  "leads": [],
+  "lead_status_updates": [],
+  "followups": [],
+  "site_visits": [],
+  "cold_data": [],
+  "projects": [],
+  "project_configurations": []
+}

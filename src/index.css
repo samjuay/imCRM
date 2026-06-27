@@ -1,0 +1,183 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Custom ImCRM Color System */
+  --color-primary-navy: #0B1F33;
+  --color-premium-gold: #C9A24D;
+  --color-soft-gold: #E8D5A3;
+  --color-card-bg: #F8FAFC;
+  --color-input-bg: #F5F7FA;
+  --color-border-color: #DCE3EA;
+  --color-text-primary: #0B1F33;
+  --color-text-secondary: #64748B;
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #DC2626;
+  --color-info: #2563EB;
+}
+
+body {
+  background-color: #F1F5F9; /* background of the whole viewport is slate to make the white device stand out */
+  color: #0B1F33;
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Custom Neumorphism Utilities with Geometric Balance Theme */
+.neu-flat {
+  background-color: #F8FAFC;
+  border-radius: 24px;
+  border: 1px solid #FFFFFF;
+  box-shadow: 8px 8px 16px rgba(11, 31, 51, 0.08), -8px -8px 16px rgba(255, 255, 255, 0.9);
+}
+
+.neu-raised {
+  background-color: #FFFFFF;
+  border-radius: 24px;
+  border: 1px solid #FFFFFF;
+  box-shadow: 8px 8px 16px rgba(11, 31, 51, 0.08), -8px -8px 16px rgba(255, 255, 255, 0.9);
+}
+
+.neu-inset {
+  background-color: #F5F7FA;
+  border-radius: 16px;
+  box-shadow: inset 4px 4px 8px rgba(11, 31, 51, 0.04), inset -4px -4px 8px rgba(255, 255, 255, 0.8);
+  border: 1px solid #FFFFFF;
+}
+
+.neu-button {
+  background-color: #FFFFFF;
+  border-radius: 16px;
+  border: 1px solid #FFFFFF;
+  box-shadow: 4px 4px 8px rgba(11, 31, 51, 0.05), -4px -4px 8px rgba(255, 255, 255, 0.9);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #0B1F33;
+  font-weight: 500;
+}
+
+.neu-button:active, .neu-button.active {
+  box-shadow: inset 3px 3px 6px rgba(11, 31, 51, 0.08), inset -3px -3px 6px rgba(255, 255, 255, 0.9);
+  transform: translateY(1px);
+}
+
+.neu-button-gold {
+  background-color: #C9A24D;
+  color: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 4px 4px 10px rgba(201, 162, 77, 0.3), -2px -2px 6px rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.neu-button-gold:active {
+  transform: translateY(1px);
+  box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.neu-button-white {
+  background-color: #FFFFFF;
+  color: #0B1F33;
+  border-radius: 12px;
+  box-shadow: 4px 4px 8px rgba(11, 31, 51, 0.05), -4px -4px 8px rgba(255,255,255,1);
+  border: 1px solid #FFFFFF;
+  transition: all 0.2s ease;
+}
+
+.neu-button-white:active {
+  transform: translateY(1px);
+}
+
+/* Float bottom nav with Geometric Balance style */
+.neu-navbar {
+  background-color: #0B1F33;
+  border-radius: 100px;
+  box-shadow: 0 10px 25px rgba(11, 31, 51, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Dynamic Dark Mode overrides for the smartphone simulator */
+.dark-mode-container {
+  background-color: #0B121C !important;
+  color: #F8FAFC !important;
+  border-color: #070D16 !important;
+}
+.dark-mode-container main {
+  background: #070D16 !important;
+  background-color: #070D16 !important;
+}
+.dark-mode-container .neu-flat {
+  background-color: #101B2B !important;
+  border-color: #1A2F45 !important;
+  box-shadow: 4px 4px 12px rgba(0, 0, 0, 0.4), -4px -4px 12px rgba(255, 255, 255, 0.02) !important;
+}
+.dark-mode-container .neu-raised {
+  background-color: #132237 !important;
+  border-color: #1A2F45 !important;
+  box-shadow: 4px 4px 12px rgba(0, 0, 0, 0.4), -4px -4px 12px rgba(255, 255, 255, 0.02) !important;
+}
+.dark-mode-container .neu-inset {
+  background-color: #0D1622 !important;
+  border-color: #1E3147 !important;
+  box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.4) !important;
+}
+.dark-mode-container .neu-button, .dark-mode-container .neu-button-white {
+  background-color: #101B2B !important;
+  border-color: #1A2F45 !important;
+  color: #EDF2F7 !important;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.3) !important;
+}
+.dark-mode-container .bg-white, .dark-mode-container .bg-card-bg {
+  background-color: #101B2B !important;
+}
+.dark-mode-container .bg-[#F1F5F9], .dark-mode-container .bg-slate-100, .dark-mode-container .bg-[#F5F7FA], .dark-mode-container .bg-slate-50 {
+  background-color: #070D16 !important;
+}
+.dark-mode-container .text-primary-navy, .dark-mode-container .text-[#0B1F33], .dark-mode-container .text-slate-900 {
+  color: #F8FAFC !important;
+}
+.dark-mode-container .text-slate-600, .dark-mode-container .text-text-secondary {
+  color: #94A3B8 !important;
+}
+.dark-mode-container .border-border-color, .dark-mode-container .border {
+  border-color: #1C2D42 !important;
+}
+.dark-mode-container select, .dark-mode-container input, .dark-mode-container textarea {
+  background-color: #0D1622 !important;
+  color: #EDF2F7 !important;
+  border-color: #1E3147 !important;
+}
+.dark-mode-container select option {
+  background-color: #101B2B !important;
+  color: #F8FAFC !important;
+}
+.dark-mode-container .bg-emerald-50, .dark-mode-container .bg-green-50, .dark-mode-container .bg-green-50\/50 {
+  background-color: rgba(22, 163, 74, 0.1) !important;
+  color: #4ADE80 !important;
+}
+.dark-mode-container .bg-red-50, .dark-mode-container .bg-red-100 {
+  background-color: rgba(220, 38, 38, 0.1) !important;
+  color: #F87171 !important;
+}
+.dark-mode-container .bg-amber-50, .dark-mode-container .bg-yellow-50 {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  color: #FBBF24 !important;
+}
+
+/* Custom scrollbar layout within phone casing */
+.custom-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: #DCE3EA;
+  border-radius: 4px;
+}
