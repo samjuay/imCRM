@@ -15,6 +15,23 @@ import fs from 'fs';
 
 dotenv.config();
 
+// Register global error handlers to catch and gracefully handle any unexpected socket/stream errors (e.g. write EPIPE or ECONNRESET) without crashing the process
+process.on('uncaughtException', (err: any) => {
+  if (err && (err.code === 'EPIPE' || err.code === 'ECONNRESET')) {
+    console.warn('[Warning] Managed Socket Connection Closed (EPIPE/ECONNRESET):', err.message);
+    return;
+  }
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  if (reason && (reason.code === 'EPIPE' || reason.code === 'ECONNRESET')) {
+    console.warn('[Warning] Managed Socket Promise Rejection (EPIPE/ECONNRESET):', reason.message);
+    return;
+  }
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
 // Ensure server startup fails immediately if Supabase configuration is missing
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
@@ -1464,6 +1481,8 @@ async function startServer() {
     if (!userId || !role) return res.status(400).json({ error: 'userId and role are required.' });
     const search = (req.query.search as string || '').toLowerCase();
     const status = req.query.status as string;
+    const sourceId = req.query.sourceId as string;
+    const assignedTo = req.query.assignedTo as string;
 
     try {
       const supabase = getSupabase();
@@ -1471,6 +1490,8 @@ async function startServer() {
       const scoped = await getScopedUserIds(userId, role, companyId);
       if (scoped) query = query.in('assigned_to', scoped);
       if (status) query = query.eq('status', status);
+      if (sourceId) query = query.eq('source_id', sourceId);
+      if (assignedTo) query = query.eq('assigned_to', assignedTo);
 
       const { data } = await query;
       let list = data || [];
@@ -2036,8 +2057,12 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`ImCRM Server running cleanly on port ${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    console.error('Server execution error:', err);
   });
 }
 

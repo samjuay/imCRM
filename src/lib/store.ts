@@ -111,7 +111,7 @@ interface AppState {
   updateLeadSource: (id: string, name: string, is_active: boolean) => Promise<{ success: boolean; error?: string }>;
 
   // Cold Data Actions
-  fetchColdData: (filters?: { search?: string; status?: string }) => Promise<void>;
+  fetchColdData: (filters?: { search?: string; status?: string; sourceId?: string; assignedTo?: string }) => Promise<void>;
   updateColdStatus: (id: string, status: string, notes?: string) => Promise<boolean>;
   bulkUploadCold: (records: any[], assignedToUserId?: string) => Promise<{ success: boolean; addedCount: number; duplicateCount: number; results?: any[] }>;
   bulkAssignCold: (recordIds: string[], targetUserId: string) => Promise<boolean>;
@@ -688,6 +688,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     let url = `/api/cold-data?userId=${user.id}&role=${user.role}&companyId=${user.company_id}`;
     if (filters.search) url += `&search=${encodeURIComponent(filters.search)}`;
     if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
+    if (filters.sourceId) url += `&sourceId=${encodeURIComponent(filters.sourceId)}`;
+    if (filters.assignedTo) url += `&assignedTo=${encodeURIComponent(filters.assignedTo)}`;
 
     try {
       const res = await fetch(url);
@@ -797,6 +799,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       if (res.ok) {
         get().fetchColdData();
+        get().fetchStats();
         return true;
       }
       return false;

@@ -35,7 +35,17 @@ export default function ColdCallingScreen() {
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [assignedSeFilter, setAssignedSeFilter] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
 
   const [activeSubTab, setActiveSubTab] = useState<'assigned' | 'upload'>('assigned');
 
@@ -66,7 +76,7 @@ export default function ColdCallingScreen() {
   const [outcomeNotes, setOutcomeNotes] = useState('');
 
   useEffect(() => {
-    fetchColdData();
+    fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
     fetchUsers();
     fetchLeadSources();
   }, [activeUser]);
@@ -78,13 +88,24 @@ export default function ColdCallingScreen() {
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(e.target.value);
-    fetchColdData({ search: e.target.value, status: statusFilter });
+    const val = e.target.value;
+    setSearch(val);
+    fetchColdData({ search: val, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
   };
 
   const handleStatusFilterChange = (st: string) => {
     setStatusFilter(st);
-    fetchColdData({ search, status: st });
+    fetchColdData({ search, status: st, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+  };
+
+  const handleSourceFilterChange = (src: string) => {
+    setSourceFilter(src);
+    fetchColdData({ search, status: statusFilter, sourceId: src, assignedTo: assignedSeFilter });
+  };
+
+  const handleAssignedSeFilterChange = (se: string) => {
+    setAssignedSeFilter(se);
+    fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: se });
   };
 
   // Convert cold to active lead
@@ -114,7 +135,7 @@ export default function ColdCallingScreen() {
 
     if (res.success) {
       setConvertingRecord(null);
-      fetchColdData();
+      fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
       // Redirect dynamically to Leads
       if (res.lead) {
         if (confirm("Qualified successfully! Would you like to view the newly created profile under Leads?")) {
@@ -135,6 +156,8 @@ export default function ColdCallingScreen() {
       setUpdatingRecordId(null);
       setNewStatus('');
       setOutcomeNotes('');
+      fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+      showToast("Call state updated successfully.");
     }
   };
 
@@ -168,34 +191,45 @@ export default function ColdCallingScreen() {
     const res = await bulkUploadCold(recordsToUpload, bulkUploadAssigneeId || undefined);
     setUploadResult(res);
     setCsvContentText('');
+    fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+    showToast(`Bulk upload finished! Imported: ${res.addedCount}, Duplicates: ${res.duplicateCount}`);
   };
 
   const isAdminOrTL = activeUser && [UserRole.COMPANY_ADMIN, UserRole.TEAM_LEADER].includes(activeUser.role);
   const assignableUsers = allUsers.filter(u => u.is_active);
 
   const toggleSelectAll = () => {
-    const nonConvertedRecords = coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
-    if (selectedIds.length === nonConvertedRecords.length) {
-      setSelectedIds([]);
+    const visibleUnqualified = coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
+    const visibleUnqualifiedIds = visibleUnqualified.map(r => r.id);
+    const allVisibleSelected = visibleUnqualifiedIds.every(id => selectedIds.includes(id));
+
+    if (allVisibleSelected) {
+      setSelectedIds(selectedIds.filter(id => !visibleUnqualifiedIds.includes(id)));
     } else {
-      setSelectedIds(nonConvertedRecords.map(r => r.id));
+      setSelectedIds(Array.from(new Set([...selectedIds, ...visibleUnqualifiedIds])));
     }
   };
 
   const handleBulkAssignSubmit = async () => {
-    if (selectedIds.length === 0 || !targetAssigneeId) return;
-    const ok = await bulkAssignCold(selectedIds, targetAssigneeId);
+    const toAssign = selectedIds.filter(id => coldRecords.some(r => r.id === id));
+    if (toAssign.length === 0 || !targetAssigneeId) return;
+    const ok = await bulkAssignCold(toAssign, targetAssigneeId);
     if (ok) {
-      setSelectedIds([]);
+      setSelectedIds(selectedIds.filter(id => !toAssign.includes(id)));
       setTargetAssigneeId('');
-      alert("Selected cold contacts assigned successfully.");
+      fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+      showToast(`Selected ${toAssign.length} cold contacts assigned successfully.`);
     } else {
       alert("Failed to assign selected cold contacts.");
     }
   };
 
   const handleBulkDeleteSubmit = () => {
-    if (selectedIds.length === 0) return;
+    const visibleSelectedIds = selectedIds.filter(id => coldRecords.some(r => r.id === id));
+    if (visibleSelectedIds.length === 0) {
+      alert("No selected cold contacts match the currently applied filters.");
+      return;
+    }
     setDeleteConfirmationOpen(true);
   };
 
@@ -226,6 +260,9 @@ export default function ColdCallingScreen() {
   };
 
   const isSE = activeUser?.role === UserRole.SALES_EXECUTIVE;
+  const visibleSelectedCount = selectedIds.filter(id => coldRecords.some(r => r.id === id)).length;
+  const visibleUnqualified = coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
+  const isAllVisibleSelected = visibleUnqualified.length > 0 && visibleUnqualified.every(r => selectedIds.includes(r.id));
 
   return (
     <div className="flex flex-col select-none pb-28 text-left space-y-4">
@@ -265,23 +302,23 @@ export default function ColdCallingScreen() {
         <div className="space-y-4">
           
           {/* Search filter panel */}
-          <div className="flex space-x-2">
-            <div className="relative flex-1">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1 min-w-[200px]">
               <input
                 type="text"
-                placeholder="Search raw pipeline by name..."
+                placeholder="Search raw pipeline by name/phone..."
                 value={search}
                 onChange={handleSearchChange}
                 className="w-full h-11 pl-9 pr-4 neu-inset text-xs rounded-xl bg-input-bg text-primary-navy"
                 id="cold-search"
               />
-              <Search className="absolute left-3 top-3 w-4 h-4 text-text-secondary" />
+              <Search className="absolute left-3 top-3.5 w-4 h-4 text-text-secondary" />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => handleStatusFilterChange(e.target.value)}
-              className="px-3 border border-border-color bg-white text-xs font-bold text-primary-navy rounded-xl"
+              className="h-11 px-3 border border-border-color bg-white text-xs font-bold text-primary-navy rounded-xl focus:outline-none min-w-[130px] cursor-pointer"
               id="cold-status-select"
             >
               <option value="">All Call States</option>
@@ -289,16 +326,54 @@ export default function ColdCallingScreen() {
                 <option key={st} value={st}>{st}</option>
               ))}
             </select>
+
+            <select
+              value={sourceFilter}
+              onChange={(e) => handleSourceFilterChange(e.target.value)}
+              className="h-11 px-3 border border-border-color bg-white text-xs font-bold text-primary-navy rounded-xl focus:outline-none min-w-[130px] cursor-pointer"
+              id="cold-source-select"
+            >
+              <option value="">All Lead Sources</option>
+              {leadSources?.map(src => (
+                <option key={src.id} value={src.id}>{src.name}</option>
+              ))}
+            </select>
+
+            {isAdminOrTL && (
+              <select
+                value={assignedSeFilter}
+                onChange={(e) => handleAssignedSeFilterChange(e.target.value)}
+                className="h-11 px-3 border border-border-color bg-white text-xs font-bold text-primary-navy rounded-xl focus:outline-none min-w-[150px] cursor-pointer"
+                id="cold-se-select"
+              >
+                <option value="">All SEs/Agents</option>
+                {allUsers
+                  .filter(u => {
+                    if (activeUser?.role === UserRole.COMPANY_ADMIN) {
+                      return u.role === UserRole.SALES_EXECUTIVE || u.role === UserRole.TEAM_LEADER;
+                    }
+                    if (activeUser?.role === UserRole.TEAM_LEADER) {
+                      return u.role === UserRole.SALES_EXECUTIVE;
+                    }
+                    return false;
+                  })
+                  .map(se => (
+                    <option key={se.id} value={se.id}>
+                      {se.full_name} ({se.role === UserRole.TEAM_LEADER ? 'TL' : 'SE'})
+                    </option>
+                  ))}
+              </select>
+            )}
           </div>
 
           {/* Bulk Assign Panel */}
-          {isAdminOrTL && selectedIds.length > 0 && (
+          {isAdminOrTL && visibleSelectedCount > 0 && (
             <div className="bg-[#fcf8f2] border border-premium-gold/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in shadow-sm">
               <div className="flex items-center space-x-2">
                 <span className="w-5 h-5 bg-[#0B1F33] text-premium-gold rounded-full flex items-center justify-center text-[10px] font-extrabold font-mono">
-                  {selectedIds.length}
+                  {visibleSelectedCount}
                 </span>
-                <span className="text-xs font-bold text-[#0B1F33]">Cold contacts selected for SE assignment</span>
+                <span className="text-xs font-bold text-[#0B1F33]">Cold contacts selected for SE assignment / action</span>
               </div>
 
               <div className="flex items-center space-x-2 shrink-0">
@@ -318,7 +393,7 @@ export default function ColdCallingScreen() {
                 <button
                   onClick={handleBulkAssignSubmit}
                   disabled={!targetAssigneeId}
-                  className="h-9 px-3.5 bg-[#0B1F33] text-white text-[10px] font-bold uppercase rounded-xl shadow hover:bg-slate-800 disabled:opacity-40 transition-all active:scale-95"
+                  className="h-9 px-3.5 bg-[#0B1F33] text-white text-[10px] font-bold uppercase rounded-xl shadow hover:bg-slate-800 disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
                 >
                   Assign
                 </button>
@@ -332,7 +407,7 @@ export default function ColdCallingScreen() {
 
                 <button
                   onClick={() => setSelectedIds([])}
-                  className="h-9 px-2 text-[10px] font-bold uppercase text-text-secondary hover:text-primary-navy"
+                  className="h-9 px-2 text-[10px] font-bold uppercase text-text-secondary hover:text-primary-navy cursor-pointer"
                 >
                   Clear
                 </button>
@@ -346,7 +421,7 @@ export default function ColdCallingScreen() {
               <label className="flex items-center space-x-2.5 cursor-pointer select-none">
                 <input
                   type="checkbox"
-                  checked={coldRecords.length > 0 && selectedIds.length === coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD).length}
+                  checked={isAllVisibleSelected}
                   onChange={toggleSelectAll}
                   className="w-4 h-4 rounded text-premium-gold focus:ring-premium-gold accent-premium-gold cursor-pointer"
                 />
@@ -758,7 +833,7 @@ export default function ColdCallingScreen() {
               <h3 className="font-display font-bold text-[#0B1F33] text-sm">Confirm Permanent Deletion</h3>
             </div>
             <p className="text-xs text-text-secondary leading-relaxed">
-              Are you sure you want to permanently delete the <strong className="text-red-600 font-bold">{selectedIds.length}</strong> selected cold contacts? This action is irreversible and will purge these records completely from the system.
+              Are you sure you want to permanently delete the <strong className="text-red-600 font-bold">{selectedIds.filter(id => coldRecords.some(r => r.id === id)).length}</strong> selected cold contacts matching the applied filters? This action is irreversible and will purge these records completely from the system.
             </p>
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
@@ -770,10 +845,12 @@ export default function ColdCallingScreen() {
               <button
                 onClick={async () => {
                   setDeleteConfirmationOpen(false);
-                  const ok = await bulkDeleteCold(selectedIds);
+                  const toDelete = selectedIds.filter(id => coldRecords.some(r => r.id === id));
+                  const ok = await bulkDeleteCold(toDelete);
                   if (ok) {
-                    setSelectedIds([]);
-                    alert("Selected cold contacts deleted successfully.");
+                    setSelectedIds(selectedIds.filter(id => !toDelete.includes(id)));
+                    showToast(`Successfully deleted ${toDelete.length} cold contacts.`);
+                    fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
                   } else {
                     alert("Failed to delete selected cold contacts.");
                   }
@@ -784,6 +861,14 @@ export default function ColdCallingScreen() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Success Toast */}
+      {toastMessage && (
+        <div className="fixed top-5 right-5 z-[10000] bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg flex items-center space-x-2 animate-fade-in">
+          <CheckCircle className="w-5 h-5 shrink-0" />
+          <span className="text-xs font-bold">{toastMessage}</span>
         </div>
       )}
     </div>
