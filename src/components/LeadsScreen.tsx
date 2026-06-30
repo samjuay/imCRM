@@ -74,7 +74,9 @@ export default function LeadsScreen() {
     offlineMode,
     leadSources,
     fetchLeadSources,
-    deleteLead
+    deleteLead,
+    activeDrawerCard,
+    setActiveTab
   } = useAppStore();
 
   // Search & Filters panel states
@@ -711,10 +713,17 @@ export default function LeadsScreen() {
         <div className="space-y-5 animate-fade-in text-left">
           {/* Back button */}
           <button 
-            onClick={() => setActiveLeadId(null)} 
+            onClick={() => {
+              if (activeDrawerCard) {
+                setActiveLeadId(null);
+                setActiveTab('dashboard');
+              } else {
+                setActiveLeadId(null);
+              }
+            }} 
             className="flex items-center space-x-1 text-xs font-bold text-[#0B1F33] bg-[#0B1F33]/5 hover:bg-[#0B1F33]/10 px-3 py-1.5 rounded-xl border border-[#0B1F33]/15 cursor-pointer max-w-fit"
           >
-            <span>&larr; Back to Leads Pipeline</span>
+            <span>&larr; {activeDrawerCard ? 'Back to Dashboard Card' : 'Back to Leads Pipeline'}</span>
           </button>
 
           {/* DESKTOP TWO-COLUMN LAYOUT FOR INTENSE B2B SaaS COCKPIT */}

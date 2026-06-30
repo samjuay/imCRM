@@ -8,7 +8,8 @@ import { useAppStore } from '../lib/store';
 import { UserRole, LeadStatus, SiteVisitStatus } from '../types';
 import { 
   AlertCircle, AlertTriangle, Calendar, CalendarRange, MapPin, 
-  PhoneOff, PhoneCall, Search, ClipboardList, CheckCircle2, Navigation, MessageSquare
+  PhoneOff, PhoneCall, Search, ClipboardList, CheckCircle2, Navigation, MessageSquare,
+  User, ExternalLink
 } from 'lucide-react';
 import BottomDrawer from './BottomDrawer';
 import EmptyState from './EmptyState';
@@ -61,10 +62,11 @@ export default function DashboardScreen() {
     projects,
     fetchProjects,
     setActiveTab,
-    darkMode
+    darkMode,
+    activeDrawerCard,
+    setActiveDrawerCard,
+    setActiveLeadId
   } = useAppStore();
-
-  const [activeDrawerCard, setActiveDrawerCard] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [drawerDataList, setDrawerDataList] = useState<any[]>([]);
@@ -185,6 +187,12 @@ export default function DashboardScreen() {
       setIsLoadingDrawer(false);
     }
   };
+
+  useEffect(() => {
+    if (activeDrawerCard) {
+      handleCardClick(activeDrawerCard);
+    }
+  }, [activeUser]);
 
   const getFilteredDrawerList = () => {
     let list = [...drawerDataList];
@@ -653,6 +661,7 @@ export default function DashboardScreen() {
                   const phoneNum = item.phone || item.leadPhone || '';
                   const relativeTitle = item.full_name || item.leadName || 'Anonymous';
                   const isFollowup = !!item.scheduled_at;
+                  const targetLeadId = item.lead_id || item.id;
                   
                   return (
                     <div 
@@ -662,7 +671,18 @@ export default function DashboardScreen() {
                       {/* Name & Badge details */}
                       <div className="flex justify-between items-start">
                         <div>
-                          <h4 className="text-xs font-bold text-primary-navy tracking-tight">{relativeTitle}</h4>
+                          <h4 
+                            onClick={() => {
+                              if (targetLeadId) {
+                                setActiveLeadId(targetLeadId);
+                                setActiveTab('leads');
+                              }
+                            }}
+                            className="text-xs font-bold text-primary-navy tracking-tight hover:text-premium-gold hover:underline cursor-pointer transition-colors flex items-center space-x-1"
+                          >
+                            <span>{relativeTitle}</span>
+                            <ExternalLink className="w-3 h-3 text-text-secondary inline" />
+                          </h4>
                           <span className="text-[10px] text-text-secondary mt-0.5 block font-mono">
                             {phoneNum}
                           </span>
@@ -934,6 +954,19 @@ export default function DashboardScreen() {
                           title="Message WhatsApp"
                         >
                           <MessageSquare className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            if (targetLeadId) {
+                              setActiveLeadId(targetLeadId);
+                              setActiveTab('leads');
+                            }
+                          }}
+                          className="neu-button px-3.5 py-1.5 text-[10px] uppercase text-premium-gold border-premium-gold/30 font-semibold focus:outline-none flex items-center space-x-1 cursor-pointer"
+                        >
+                          <User className="w-3.5 h-3.5" />
+                          <span>View Details</span>
                         </button>
 
                         <button

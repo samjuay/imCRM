@@ -18,6 +18,7 @@ interface AppState {
   activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources';
   activeLeadId: string | null;
   activeProjectId: string | null;
+  activeDrawerCard: string | null;
   
   // App State Data
   stats: DashboardStats | null;
@@ -66,6 +67,7 @@ interface AppState {
   setActiveTab: (tab: AppState['activeTab']) => void;
   setActiveLeadId: (leadId: string | null) => void;
   setActiveProjectId: (projectId: string | null) => void;
+  setActiveDrawerCard: (cardId: string | null) => void;
 
   // Data Actions
   fetchStats: () => Promise<void>;
@@ -146,6 +148,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTab: 'dashboard',
   activeLeadId: null,
   activeProjectId: null,
+  activeDrawerCard: null,
   
   stats: null,
   leads: [],
@@ -305,7 +308,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setActiveTab: (tab) => {
-    set({ activeTab: tab, error: null });
+    const isViewingLeadDetailFromDashboard = tab === 'leads' && get().activeLeadId !== null;
+    set({ 
+      activeTab: tab, 
+      error: null,
+      activeDrawerCard: (tab === 'dashboard' || isViewingLeadDetailFromDashboard) ? get().activeDrawerCard : null
+    });
     if (tab === 'dashboard') get().fetchStats();
     if (tab === 'leads') get().fetchLeads({ page: 1 });
     if (tab === 'cold-calling') get().fetchColdData();
@@ -315,6 +323,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setActiveLeadId: (leadId) => set({ activeLeadId: leadId }),
   setActiveProjectId: (projectId) => set({ activeProjectId: projectId }),
+  setActiveDrawerCard: (cardId) => set({ activeDrawerCard: cardId }),
 
   toggleOfflineMode: () => set((state) => ({ offlineMode: !state.offlineMode })),
   toggleDarkMode: () => set((state) => ({ darkMode: !state.darkMode })),
