@@ -172,6 +172,9 @@ async function bootstrapDatabase() {
       } else {
         console.error('[DB Bootstrap] Failed to create Company Admin auth:', createAdminErr?.message);
       }
+    } else {
+      console.log('[DB Bootstrap] Syncing Company Admin auth password to standard default...');
+      await adminSupabase.auth.admin.updateUserById(adminUser.id, { password: 'password' });
     }
 
     // Find or Create samjuay@gmail.com (Team Leader)
@@ -193,6 +196,9 @@ async function bootstrapDatabase() {
       } else {
         console.error('[DB Bootstrap] Failed to create Team Leader auth:', createLeaderErr?.message);
       }
+    } else {
+      console.log('[DB Bootstrap] Syncing Team Leader auth password to standard default...');
+      await adminSupabase.auth.admin.updateUserById(leaderUser.id, { password: 'password' });
     }
 
     // Repair Profiles and Teams
