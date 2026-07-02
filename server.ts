@@ -1144,10 +1144,11 @@ async function startServer() {
       const { error: insErr } = await supabase.from('leads').insert([lead]);
       if (insErr) throw insErr;
 
-      await supabase.from('lead_status_updates').insert([{
+      const { error: statusErr } = await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: newId, company_id: companyId, user_id: created_by || '11111111-1111-1111-1111-111111111111',
-        previous_status: 'None', new_status: LeadStatus.NEW, remark: initial_notes || 'Lead creation lock', created_at: new Date().toISOString()
+        previous_status: LeadStatus.NEW, new_status: LeadStatus.NEW, remark: initial_notes || 'Lead creation lock', created_at: new Date().toISOString()
       }]);
+      if (statusErr) throw statusErr;
 
       res.json({ success: true, lead });
     } catch (err: any) {
@@ -1440,7 +1441,7 @@ async function startServer() {
 
         await supabase.from('lead_status_updates').insert([{
           id: crypto.randomUUID(), lead_id: leadId, company_id: companyId, user_id: createdBy,
-          previous_status: 'None', new_status: obj.status, remark: 'Bulk importing logging workflow', created_at: new Date().toISOString()
+          previous_status: LeadStatus.NEW, new_status: obj.status, remark: 'Bulk importing logging workflow', created_at: new Date().toISOString()
         }]);
 
         if (l.followupDate) {
@@ -1647,10 +1648,11 @@ async function startServer() {
       };
       await supabase.from('leads').insert([lead]);
 
-      await supabase.from('lead_status_updates').insert([{
+      const { error: statusErr } = await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: leadId, company_id: record.company_id, user_id: user_id || '11111111-1111-1111-1111-111111111111',
-        previous_status: 'None', new_status: LeadStatus.NEW, remark: notes || 'Converted call database logging', created_at: new Date().toISOString()
+        previous_status: LeadStatus.NEW, new_status: LeadStatus.NEW, remark: notes || 'Converted call database logging', created_at: new Date().toISOString()
       }]);
+      if (statusErr) throw statusErr;
 
       await supabase.from('cold_data').update({ converted_lead_id: leadId, status: ColdStatus.CONVERTED_TO_LEAD }).eq('id', id);
       res.json({ success: true, lead });

@@ -321,7 +321,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (tab === 'reports') get().fetchReports();
   },
 
-  setActiveLeadId: (leadId) => set({ activeLeadId: leadId }),
+  setActiveLeadId: (leadId) => set({ activeLeadId: leadId, activeLeadDetails: null }),
   setActiveProjectId: (projectId) => set({ activeProjectId: projectId }),
   setActiveDrawerCard: (cardId) => set({ activeDrawerCard: cardId }),
 

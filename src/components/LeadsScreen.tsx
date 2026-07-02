@@ -47,6 +47,29 @@ const INVALID_REASONS = [
   'Other'
 ];
 
+const getInitialNotes = (statusHistory: any[]) => {
+  if (!statusHistory || statusHistory.length === 0) return '';
+  const record = statusHistory.find(
+    (h: any) => h.previous_status === 'None' || (h.previous_status === 'New' && h.new_status === 'New')
+  ) || statusHistory[statusHistory.length - 1];
+
+  if (!record) return '';
+  const note = record.remark || '';
+  if (note === 'Lead creation lock' || note === 'Converted call database logging' || note === 'Bulk importing logging workflow') {
+    return '';
+  }
+  return note;
+};
+
+const parseBudgetVal = (val: string | number) => {
+  const num = Number(val);
+  if (!num) return undefined;
+  if (num <= 10000) {
+    return num * 100000;
+  }
+  return num;
+};
+
 export default function LeadsScreen() {
   const { 
     activeUser,
@@ -121,7 +144,9 @@ export default function LeadsScreen() {
     project_interests: [] as string[],
     budget_min: '',
     budget_max: '',
-    bedroom_preference: '2BHK',
+    bedroom_preference: '2 BHK',
+    carpet_area_min: '',
+    carpet_area_max: '',
     assigned_to: '',
     initial_notes: ''
   });
@@ -557,13 +582,16 @@ export default function LeadsScreen() {
     if (!formData.full_name.trim()) return setFormError('Name is required.');
     if (!formData.phone.trim() || formData.phone.length < 8) return setFormError('Enter a valid mobile number.');
 
+    const compositeBedroomPref = `${formData.bedroom_preference || '2 BHK'}|${formData.carpet_area_min || ''}|${formData.carpet_area_max || ''}`;
+
     if (editingLeadRecordId) {
       const ok = await updateLeadBasic(editingLeadRecordId, {
         ...formData,
+        bedroom_preference: compositeBedroomPref,
         source_id: formData.source,
         project_interests: formData.project_interests,
-        budget_min: Number(formData.budget_min) || undefined,
-        budget_max: Number(formData.budget_max) || undefined
+        budget_min: parseBudgetVal(formData.budget_min),
+        budget_max: parseBudgetVal(formData.budget_max)
       });
       if (ok) {
         setIsOpenCreateSheet(false);
@@ -580,7 +608,9 @@ export default function LeadsScreen() {
           project_interests: [],
           budget_min: '',
           budget_max: '',
-          bedroom_preference: '2BHK',
+          bedroom_preference: '2 BHK',
+          carpet_area_min: '',
+          carpet_area_max: '',
           assigned_to: '',
           initial_notes: ''
         });
@@ -592,10 +622,11 @@ export default function LeadsScreen() {
 
     const resResult = await createLead({
       ...formData,
+      bedroom_preference: compositeBedroomPref,
       source_id: formData.source,
       project_interests: formData.project_interests,
-      budget_min: Number(formData.budget_min) || undefined,
-      budget_max: Number(formData.budget_max) || undefined
+      budget_min: parseBudgetVal(formData.budget_min),
+      budget_max: parseBudgetVal(formData.budget_max)
     });
 
     if (resResult.success) {
@@ -612,7 +643,9 @@ export default function LeadsScreen() {
         project_interests: [],
         budget_min: '',
         budget_max: '',
-        bedroom_preference: '2BHK',
+        bedroom_preference: '2 BHK',
+        carpet_area_min: '',
+        carpet_area_max: '',
         assigned_to: '',
         initial_notes: ''
       });
@@ -709,8 +742,29 @@ export default function LeadsScreen() {
   return (
     <div className="flex flex-col select-none pb-28 min-h-[70vh]">
       {/* 1. SINGLE LEAD DETAIL VIEW (Page 11-12) */}
-      {activeLeadId && activeLeadDetails ? (
-        <div className="space-y-5 animate-fade-in text-left">
+      {activeLeadId ? (
+        !activeLeadDetails || activeLeadDetails.lead.id !== activeLeadId ? (
+          <div className="space-y-5 animate-fade-in text-left">
+            {/* Back button */}
+            <button 
+              onClick={() => {
+                if (activeDrawerCard) {
+                  setActiveLeadId(null);
+                  setActiveTab('dashboard');
+                } else {
+                  setActiveLeadId(null);
+                }
+              }} 
+              className="flex items-center space-x-1 text-xs font-bold text-[#0B1F33] bg-[#0B1F33]/5 hover:bg-[#0B1F33]/10 px-3 py-1.5 rounded-xl border border-[#0B1F33]/15 cursor-pointer max-w-fit"
+            >
+              <span>&larr; {activeDrawerCard ? 'Back to Dashboard Card' : 'Back to Leads Pipeline'}</span>
+            </button>
+            <div className="rounded-[24px] bg-white border border-slate-200 p-6 shadow-sm">
+              <SkeletonLoader type="list" count={3} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5 animate-fade-in text-left">
           {/* Back button */}
           <button 
             onClick={() => {
@@ -775,14 +829,45 @@ export default function LeadsScreen() {
                     <span className="font-bold text-primary-navy font-display">{activeLeadDetails.lead.location || 'Any'}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block">BHK Bedroom Config</span>
-                    <span className="font-bold text-primary-navy font-mono">{activeLeadDetails.lead.bedroom_preference || '2 BHK'}</span>
+                    <span className="text-[10px] text-slate-400 block">Configuration Preference</span>
+                    <span className="font-bold text-primary-navy font-mono">{(activeLeadDetails.lead.bedroom_preference || '').split('|')[0] || 'Unstated'}</span>
                   </div>
                   <div>
+                    <span className="text-[10px] text-slate-400 block">Carpet Area Preference</span>
+                    <span className="font-bold text-primary-navy font-mono">
+                      {(() => {
+                        const parts = (activeLeadDetails.lead.bedroom_preference || '').split('|');
+                        const min = parts[1];
+                        const max = parts[2];
+                        if (min && max) return `${min} to ${max} sqft`;
+                        if (min) return `>= ${min} sqft`;
+                        if (max) return `<= ${max} sqft`;
+                        return 'Any';
+                      })()}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-[10px] text-slate-400 block">Interested Projects</span>
+                    <span className="font-bold text-primary-navy font-display">
+                      {(activeLeadDetails.lead.project_interests || [])
+                        .map((projId: string) => projects.find(p => p.id === projId)?.name)
+                        .filter(Boolean)
+                        .join(', ') || 'None Selected'}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
                     <span className="text-[10px] text-slate-400 block">Pricing Budget</span>
                     <span className="font-bold text-[#0B1F33] font-mono whitespace-nowrap">₹{((activeLeadDetails.lead.budget_min || 0)/100000).toFixed(0)}L to ₹{((activeLeadDetails.lead.budget_max || 100000000)/100000).toFixed(0)}L</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Initial Summary Notes Card */}
+              <div className="rounded-[24px] bg-white border border-slate-200 p-6 space-y-3 shadow-sm text-xs text-left">
+                <h3 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display border-b border-slate-100 pb-2">Initial Summary Notes</h3>
+                <p className="text-slate-600 leading-normal italic">
+                  {getInitialNotes(activeLeadDetails.statusHistory) || 'No initial notes logged.'}
+                </p>
               </div>
 
               {/* Personnel Metadata */}
@@ -808,6 +893,7 @@ export default function LeadsScreen() {
                   <button
                     onClick={() => {
                       // Pre-fill creation form fields with selected lead's active content to Edit
+                      const parts = (activeLeadDetails.lead.bedroom_preference || '').split('|');
                       setFormData({
                         full_name: activeLeadDetails.lead.full_name,
                         phone: activeLeadDetails.lead.phone,
@@ -819,9 +905,11 @@ export default function LeadsScreen() {
                         project_interests: activeLeadDetails.lead.project_interests || [],
                         budget_min: activeLeadDetails.lead.budget_min?.toString() || '',
                         budget_max: activeLeadDetails.lead.budget_max?.toString() || '',
-                        bedroom_preference: activeLeadDetails.lead.bedroom_preference || '2BHK',
+                        bedroom_preference: parts[0] || '2 BHK',
+                        carpet_area_min: parts[1] || '',
+                        carpet_area_max: parts[2] || '',
                         assigned_to: activeLeadDetails.lead.assigned_to || '',
-                        initial_notes: ''
+                        initial_notes: getInitialNotes(activeLeadDetails.statusHistory)
                       });
                       setEditingLeadRecordId(activeLeadDetails.lead.id);
                       setIsOpenCreateSheet(true);
@@ -1241,7 +1329,7 @@ export default function LeadsScreen() {
               </div>
               <div className="flex items-center space-x-2 text-text-secondary">
                 <Landmark className="w-4 h-4 text-premium-gold shrink-0" />
-                <span>Config: {activeLeadDetails.lead.bedroom_preference || 'Any (2BHK preferred)'}</span>
+                <span>Config: {(activeLeadDetails.lead.bedroom_preference || '').split('|')[0] || 'Any'}</span>
               </div>
               <div className="flex items-center space-x-2 text-text-secondary">
                 <Clock className="w-4 h-4 text-premium-gold shrink-0" />
@@ -1301,24 +1389,51 @@ export default function LeadsScreen() {
 
               <div className="rounded-[24px] neu-flat bg-white p-5 border border-border-color space-y-3">
                 <h3 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display">Lead Preferences</h3>
-                <div className="grid grid-cols-2 gap-2.5 text-xs text-text-secondary">
+                <div className="grid grid-cols-2 gap-2.5 text-xs text-text-secondary text-left">
                   <div>
                     <span className="font-semibold text-primary-navy block">City Focus:</span>
                     <span>{activeLeadDetails.lead.city || 'Delhi/NCR'}</span>
                   </div>
                   <div>
-                    <span className="font-semibold text-primary-navy block">BHK Preference:</span>
-                    <span>{activeLeadDetails.lead.bedroom_preference || '2 BHK'}</span>
+                    <span className="font-semibold text-primary-navy block">Configuration Pref:</span>
+                    <span>{(activeLeadDetails.lead.bedroom_preference || '').split('|')[0] || 'Unstated'}</span>
                   </div>
                   <div>
-                    <span className="font-semibold text-primary-navy block">Budget Min:</span>
-                    <span className="font-mono">₹{activeLeadDetails.lead.budget_min?.toLocaleString('en-IN')}</span>
+                    <span className="font-semibold text-primary-navy block">Carpet Area Pref:</span>
+                    <span>
+                      {(() => {
+                        const parts = (activeLeadDetails.lead.bedroom_preference || '').split('|');
+                        const min = parts[1];
+                        const max = parts[2];
+                        if (min && max) return `${min}-${max} sqft`;
+                        if (min) return `>= ${min} sqft`;
+                        if (max) return `<= ${max} sqft`;
+                        return 'Any';
+                      })()}
+                    </span>
                   </div>
                   <div>
-                    <span className="font-semibold text-primary-navy block">Budget Max:</span>
-                    <span className="font-mono">₹{activeLeadDetails.lead.budget_max?.toLocaleString('en-IN')}</span>
+                    <span className="font-semibold text-primary-navy block">Pricing Budget:</span>
+                    <span className="font-mono text-[10.5px]">₹{((activeLeadDetails.lead.budget_min || 0)/100000).toFixed(0)}L - ₹{((activeLeadDetails.lead.budget_max || 100000000)/100000).toFixed(0)}L</span>
+                  </div>
+                  <div className="col-span-2 border-t border-slate-100 pt-2 mt-1">
+                    <span className="font-semibold text-primary-navy block">Interested Projects:</span>
+                    <span className="normal-case">
+                      {(activeLeadDetails.lead.project_interests || [])
+                        .map((projId: string) => projects.find(p => p.id === projId)?.name)
+                        .filter(Boolean)
+                        .join(', ') || 'None Selected'}
+                    </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Initial Summary Notes Card (Mobile) */}
+              <div className="rounded-[24px] bg-white border border-slate-200 p-5 space-y-2 text-left text-xs">
+                <h3 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display">Initial Summary Notes</h3>
+                <p className="text-slate-600 leading-normal italic">
+                  {getInitialNotes(activeLeadDetails.statusHistory) || 'No initial notes logged.'}
+                </p>
               </div>
 
               {/* CRM Records Actions (Phase 4 Leads Actions) */}
@@ -1327,6 +1442,7 @@ export default function LeadsScreen() {
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => {
+                      const parts = (activeLeadDetails.lead.bedroom_preference || '').split('|');
                       setFormData({
                         full_name: activeLeadDetails.lead.full_name,
                         phone: activeLeadDetails.lead.phone,
@@ -1338,9 +1454,11 @@ export default function LeadsScreen() {
                         project_interests: activeLeadDetails.lead.project_interests || [],
                         budget_min: activeLeadDetails.lead.budget_min?.toString() || '',
                         budget_max: activeLeadDetails.lead.budget_max?.toString() || '',
-                        bedroom_preference: activeLeadDetails.lead.bedroom_preference || '2BHK',
+                        bedroom_preference: parts[0] || '2 BHK',
+                        carpet_area_min: parts[1] || '',
+                        carpet_area_max: parts[2] || '',
                         assigned_to: activeLeadDetails.lead.assigned_to || '',
-                        initial_notes: ''
+                        initial_notes: getInitialNotes(activeLeadDetails.statusHistory)
                       });
                       setEditingLeadRecordId(activeLeadDetails.lead.id);
                       setIsOpenCreateSheet(true);
@@ -1852,6 +1970,7 @@ export default function LeadsScreen() {
           )}
           </div>
         </div>
+        )
       ) : (
         
         // 2. LEADS SEARCH LIST HOME (Page 11)
@@ -2073,8 +2192,21 @@ export default function LeadsScreen() {
                             <span className="font-mono text-slate-400 block text-[10px]">{lead.phone} • {lead.email || 'no email registered'}</span>
                           </div>
                         </td>
-                        <td className="p-4 py-3.5 text-slate-500 font-mono">
-                          {lead.bedroom_preference || 'Unstated Preference'} ({lead.city || 'NCR'})
+                        <td className="p-4 py-3.5 text-slate-500 font-mono text-left">
+                          <div>
+                            <span className="font-bold text-primary-navy block">{(lead.bedroom_preference || '').split('|')[0] || 'Unstated'}</span>
+                            <span className="text-[10px] text-slate-400 block">
+                              {(() => {
+                                const parts = (lead.bedroom_preference || '').split('|');
+                                const min = parts[1];
+                                const max = parts[2];
+                                if (min && max) return `${min}-${max} sqft`;
+                                if (min) return `>= ${min} sqft`;
+                                if (max) return `<= ${max} sqft`;
+                                return 'Carpet: Any';
+                              })()}
+                            </span>
+                          </div>
                         </td>
                         <td className="p-4 py-3.5 font-bold text-slate-500 font-mono">
                           ₹{lead.budget_min ? (lead.budget_min/100000).toFixed(0) : '0'}L - ₹{lead.budget_max ? (lead.budget_max/100000).toFixed(0) : '0'}L
@@ -2257,7 +2389,16 @@ export default function LeadsScreen() {
                       >
                         <h4 className="text-xs font-bold text-primary-navy font-display">{lead.full_name}</h4>
                         <p className="text-[10px] text-text-secondary mt-0.5 leading-none">{lead.phone} • Info Source: {getSourceName(lead.source_id)}</p>
-                        <span className="text-[9px] text-premium-gold uppercase font-semibold font-display block mt-1">Config: {lead.bedroom_preference || 'Unstated'}</span>
+                        <span className="text-[9px] text-premium-gold uppercase font-semibold font-display block mt-1">
+                          Config: {(lead.bedroom_preference || '').split('|')[0] || 'Unstated'}
+                          {(() => {
+                            const parts = (lead.bedroom_preference || '').split('|');
+                            if (parts[1] || parts[2]) {
+                              return ` (${parts[1] || '0'}-${parts[2] || 'Any'} sqft)`;
+                            }
+                            return '';
+                          })()}
+                        </span>
                       </div>
                     </div>
 
@@ -2398,18 +2539,46 @@ export default function LeadsScreen() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Size Preferences</label>
+              <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Configuration Preference</label>
               <select
                 value={formData.bedroom_preference}
                 onChange={(e) => setFormData({ ...formData, bedroom_preference: e.target.value })}
                 className="w-full h-11 px-3 border border-border-color bg-input-bg rounded-xl font-medium"
               >
-                <option value="1BHK">1 BHK Suite</option>
-                <option value="2BHK">2 BHK Condo</option>
-                <option value="3BHK">3 BHK Premium</option>
-                <option value="Penthouse">Ultra penthouse</option>
-                <option value="Plot">Open Plots</option>
+                <option value="1 BHK">1 BHK</option>
+                <option value="2 BHK">2 BHK</option>
+                <option value="2.5 BHK">2.5 BHK</option>
+                <option value="3 BHK">3 BHK</option>
+                <option value="3.5 BHK">3.5 BHK</option>
+                <option value="4 BHK">4 BHK</option>
+                <option value="4.5 BHK">4.5 BHK</option>
+                <option value="Garden Apartment">Garden Apartment</option>
+                <option value="Penthouse">Penthouse</option>
+                <option value="Villa/Bungalow/Rowhouse">Villa/Bungalow/Rowhouse</option>
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Min Carpet Area (sqft)</label>
+              <input
+                type="number"
+                value={formData.carpet_area_min}
+                onChange={(e) => setFormData({ ...formData, carpet_area_min: e.target.value })}
+                placeholder="e.g. 500"
+                className="w-full h-11 px-4 neu-inset text-xs rounded-xl bg-input-bg border-border-color text-primary-navy font-medium"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Max Carpet Area (sqft)</label>
+              <input
+                type="number"
+                value={formData.carpet_area_max}
+                onChange={(e) => setFormData({ ...formData, carpet_area_max: e.target.value })}
+                placeholder="e.g. 2500"
+                className="w-full h-11 px-4 neu-inset text-xs rounded-xl bg-input-bg border-border-color text-primary-navy font-medium"
+              />
             </div>
           </div>
 

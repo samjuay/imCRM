@@ -14,6 +14,15 @@ import BottomDrawer from './BottomDrawer';
 import EmptyState from './EmptyState';
 import SkeletonLoader from './SkeletonLoader';
 
+const parseBudgetVal = (val: string | number) => {
+  const num = Number(val);
+  if (!num) return undefined;
+  if (num <= 10000) {
+    return num * 100000;
+  }
+  return num;
+};
+
 export default function ColdCallingScreen() {
   const { 
     activeUser,
@@ -56,7 +65,9 @@ export default function ColdCallingScreen() {
     project_interests: [] as string[],
     budget_min: '',
     budget_max: '',
-    bedroom_preference: '2BHK',
+    bedroom_preference: '2 BHK',
+    carpet_area_min: '',
+    carpet_area_max: '',
     notes: ''
   });
   const [conversionError, setConversionError] = useState('');
@@ -116,7 +127,9 @@ export default function ColdCallingScreen() {
       project_interests: [],
       budget_min: '',
       budget_max: '',
-      bedroom_preference: '2BHK',
+      bedroom_preference: '2 BHK',
+      carpet_area_min: '',
+      carpet_area_max: '',
       notes: rec.notes || ''
     });
     setConversionError('');
@@ -127,10 +140,13 @@ export default function ColdCallingScreen() {
     if (!convertingRecord) return;
     setConversionError('');
 
+    const compositeBedroomPref = `${conversionForm.bedroom_preference || '2 BHK'}|${conversionForm.carpet_area_min || ''}|${conversionForm.carpet_area_max || ''}`;
+
     const res = await convertColdToLead(convertingRecord.id, {
       ...conversionForm,
-      budget_min: Number(conversionForm.budget_min) || undefined,
-      budget_max: Number(conversionForm.budget_max) || undefined
+      bedroom_preference: compositeBedroomPref,
+      budget_min: parseBudgetVal(conversionForm.budget_min),
+      budget_max: parseBudgetVal(conversionForm.budget_max)
     });
 
     if (res.success) {
@@ -748,17 +764,22 @@ export default function ColdCallingScreen() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Size Preference</label>
+                <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Configuration Preference</label>
                 <select
                   value={conversionForm.bedroom_preference}
                   onChange={(e) => setConversionPayload({ ...conversionForm, bedroom_preference: e.target.value })}
                   className="w-full h-11 px-3 border border-border-color bg-input-bg rounded-xl text-primary-navy font-semibold"
                 >
-                  <option value="1BHK">1 BHK Suite</option>
-                  <option value="2BHK">2 BHK Condo</option>
-                  <option value="3BHK">3 BHK Premium</option>
-                  <option value="Penthouse">Ultra penthouse</option>
-                  <option value="Plot">Open Plots</option>
+                  <option value="1 BHK">1 BHK</option>
+                  <option value="2 BHK">2 BHK</option>
+                  <option value="2.5 BHK">2.5 BHK</option>
+                  <option value="3 BHK">3 BHK</option>
+                  <option value="3.5 BHK">3.5 BHK</option>
+                  <option value="4 BHK">4 BHK</option>
+                  <option value="4.5 BHK">4.5 BHK</option>
+                  <option value="Garden Apartment">Garden Apartment</option>
+                  <option value="Penthouse">Penthouse</option>
+                  <option value="Villa/Bungalow/Rowhouse">Villa/Bungalow/Rowhouse</option>
                 </select>
               </div>
 
@@ -773,6 +794,29 @@ export default function ColdCallingScreen() {
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Min Carpet Area (sqft)</label>
+                <input
+                  type="number"
+                  value={conversionForm.carpet_area_min}
+                  onChange={(e) => setConversionPayload({ ...conversionForm, carpet_area_min: e.target.value })}
+                  placeholder="e.g. 500"
+                  className="w-full h-11 px-4 neu-inset text-xs rounded-xl bg-input-bg border-border-color text-primary-navy"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Max Carpet Area (sqft)</label>
+                <input
+                  type="number"
+                  value={conversionForm.carpet_area_max}
+                  onChange={(e) => setConversionPayload({ ...conversionForm, carpet_area_max: e.target.value })}
+                  placeholder="e.g. 2500"
+                  className="w-full h-11 px-4 neu-inset text-xs rounded-xl bg-input-bg border-border-color text-primary-navy"
+                />
               </div>
             </div>
 
