@@ -209,6 +209,21 @@ export interface DashboardStats {
   totalTeams?: number;
   totalLeads?: number;
   totalLeadSources?: number;
+  kpiJustification?: any;
+}
+
+export interface Activity {
+  id: string;
+  company_id: string;
+  lead_id: string;
+  user_id: string;
+  team_id?: string;
+  activity_type: string;
+  previous_status?: string;
+  new_status?: string;
+  created_at: string;
+  created_by?: string;
+  notes?: string;
 }
 
 export function getInitials(fullName: string | null | undefined): string {

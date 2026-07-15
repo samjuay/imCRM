@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { useAppStore } from '../lib/store';
-import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus } from 'lucide-react';
+import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus, History, Sparkles } from 'lucide-react';
 import { UserRole, getInitials } from '../types';
 import ImCrmLogo from './ImCrmLogo';
 
@@ -14,8 +14,10 @@ export default function SidebarNavigation() {
 
   const navItems = [
     { id: 'dashboard', label: 'Home Dashboard', icon: LayoutDashboard, desc: 'Performance stats & action' },
+    { id: 'ai-coach', label: 'AI Performance Coach', icon: Sparkles, desc: 'Intelligent daily suggestions' },
     { id: 'leads', label: 'Leads Pipeline', icon: Users, desc: 'Real estate leads list' },
     { id: 'projects', label: 'Project Inventory', icon: Building, desc: 'Physical towers & units' },
+    { id: 'activity-history', label: 'Activity History', icon: History, desc: 'Real-time timeline audit' },
     { id: 'reports', label: 'Performance Reports', icon: BarChart3, desc: 'Team & company audits' },
     { id: 'cold-calling', label: 'Cold Calling', icon: PhoneCall, desc: 'Unassigned call pools' },
     { id: 'lead-sources', label: 'Lead Sources', icon: ListPlus, desc: 'Campaign acquisition channels' },

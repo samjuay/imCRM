@@ -14,6 +14,8 @@ import ProjectsScreen from './components/ProjectsScreen';
 import ColdCallingScreen from './components/ColdCallingScreen';
 import ReportsScreen from './components/ReportsScreen';
 import LeadSourcesScreen from './components/LeadSourcesScreen';
+import ActivityHistoryScreen from './components/ActivityHistoryScreen';
+import AICoachScreen from './components/AICoachScreen';
 import SkeletonLoader from './components/SkeletonLoader';
 import LoginScreen from './components/LoginScreen';
 import { Building2 } from 'lucide-react';
@@ -45,6 +47,8 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard':
         return <DashboardScreen />;
+      case 'ai-coach':
+        return <AICoachScreen />;
       case 'leads':
         return <LeadsScreen />;
       case 'cold-calling':
@@ -55,6 +59,8 @@ export default function App() {
         return <ReportsScreen />;
       case 'lead-sources':
         return <LeadSourcesScreen />;
+      case 'activity-history':
+        return <ActivityHistoryScreen />;
       default:
         return <DashboardScreen />;
     }

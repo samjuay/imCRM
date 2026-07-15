@@ -5,13 +5,14 @@
 
 import React from 'react';
 import { useAppStore } from '../lib/store';
-import { LayoutDashboard, Users, Building, BarChart3, PhoneCall } from 'lucide-react';
+import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, Sparkles } from 'lucide-react';
 
 export default function BottomNavigation() {
   const { activeTab, setActiveTab, activeLeadId, activeProjectId } = useAppStore();
 
   const navItems = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
+    { id: 'ai-coach', label: 'AI Coach', icon: Sparkles },
     { id: 'leads', label: 'Leads', icon: Users },
     { id: 'projects', label: 'Projects', icon: Building },
     { id: 'reports', label: 'Reports', icon: BarChart3 },

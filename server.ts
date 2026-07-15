@@ -9,6 +9,8 @@ import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import { getSupabase, getSupabaseAdmin, getServerUserSupabase } from './src/db/supabaseClient';
 import { UserRole, LeadStatus, ColdStatus, SiteVisitStatus, Lead, ColdData } from './src/types';
+import { trackActivity, getActivities } from './src/db/activitiesStore';
+import { kpiEngine } from './src/lib/kpiEngine';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -706,6 +708,7 @@ async function startServer() {
 
 
   // --- 2. DASHBOARD COUNT STATS ---
+
   app.get('/api/dashboard/stats', async (req, res) => {
     const userId = req.query.userId as string;
     const role = req.query.role as string;
@@ -725,12 +728,17 @@ async function startServer() {
         LeadStatus.NEW, LeadStatus.ATTEMPTED, LeadStatus.CONNECTED, LeadStatus.FOLLOWUP_SCHEDULED,
         LeadStatus.INTERESTED, LeadStatus.SITE_VISIT_SCHEDULED, LeadStatus.SITE_VISIT_DONE, LeadStatus.NEGOTIATION
       ];
-      let leadsQuery = supabase.from('leads').select('id, assigned_to').eq('company_id', companyId).in('status', activeStatusValues);
+      let leadsQuery = supabase.from('leads').select('id, assigned_to, status').eq('company_id', companyId);
       if (scopedUserIds) {
         leadsQuery = leadsQuery.in('assigned_to', scopedUserIds);
       }
-      const { data: activeLeads } = await leadsQuery;
-      const activeLeadsIds = (activeLeads || []).map(l => l.id);
+      const { data: allLeads } = await leadsQuery;
+
+      const activeLeads = (allLeads || []).filter(l => {
+        const computedStatus = l.status || LeadStatus.NEW;
+        return activeStatusValues.includes(computedStatus as LeadStatus);
+      });
+      const activeLeadsIds = activeLeads.map(l => l.id);
 
       // Followups Query
       let fQuery = supabase.from('followups').select('id, lead_id, scheduled_at, user_id').eq('company_id', companyId).eq('completed', false);
@@ -755,7 +763,7 @@ async function startServer() {
       const activeSvLeadIds = new Set(activeSiteVisitsFiltered.map(sv => sv.lead_id));
 
       const pendingFollowupLeadIds = new Set(pendingList.map(f => f.lead_id));
-      const leadsWithoutFollowup = (activeLeads || []).filter(l => !pendingFollowupLeadIds.has(l.id) && !activeSvLeadIds.has(l.id)).length;
+      const leadsWithoutFollowup = activeLeads.filter(l => !pendingFollowupLeadIds.has(l.id) && !activeSvLeadIds.has(l.id)).length;
 
       // Followup stats
       const followupsDueToday = pendingList.filter(f => f.scheduled_at.split('T')[0] === todayStr).length;
@@ -794,6 +802,66 @@ async function startServer() {
         supabase.from('lead_sources').select('id', { count: 'exact', head: true }).eq('company_id', companyId)
       ]);
 
+      // --- Compute Monthly KPI Justification ---
+      const today = new Date();
+      const startOfMonthStr = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+      const endOfMonthStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      let mvQuery = supabase.from('site_visits')
+        .select('id, status, user_id')
+        .eq('company_id', companyId)
+        .gte('scheduled_date', startOfMonthStr)
+        .lte('scheduled_date', endOfMonthStr);
+      if (scopedUserIds) {
+        mvQuery = mvQuery.in('user_id', scopedUserIds);
+      }
+      const { data: mVisits } = await mvQuery;
+      const visitsThisMonth = mVisits || [];
+
+      let muQuery = supabase.from('lead_status_updates')
+        .select('id, new_status, user_id, lead_id')
+        .eq('company_id', companyId)
+        .gte('created_at', `${startOfMonthStr}T00:00:00.000Z`)
+        .lte('created_at', `${endOfMonthStr}T23:59:59.999Z`);
+      if (scopedUserIds) {
+        muQuery = muQuery.in('user_id', scopedUserIds);
+      }
+      const { data: mUpdates } = await muQuery;
+      const updatesThisMonth = mUpdates || [];
+
+      const visitsPlanned = visitsThisMonth.length;
+      const visitsCompleted = visitsThisMonth.filter(v => v.status === 'visited').length;
+      const bookingsCount = updatesThisMonth.filter(u => u.new_status === LeadStatus.BOOKING_DONE).length;
+
+      const monthlyKPIResult = kpiEngine.calculateKPI({
+        visitsPlanned,
+        visitsCompleted,
+        bookingsCount,
+        revenueGenerated: 0
+      });
+
+      const mScore = monthlyKPIResult.score;
+      const mRemainingKPI = Number((100 - mScore).toFixed(2));
+      const mProjections = kpiEngine.getEstimatedCompletion(mScore, startOfMonthStr, endOfMonthStr);
+      const mPerformanceRank = kpiEngine.getPerformanceRank(mScore);
+      const mMotivationalStatus = kpiEngine.getMotivationalStatus(mScore);
+
+      const kpiJustification = {
+        role,
+        monthlySalaryTarget: role === UserRole.TEAM_LEADER ? 100000 : 50000,
+        monthlySalesTarget: role === UserRole.TEAM_LEADER ? 'Team Performance Based' : 10000000,
+        visitsPlanned,
+        visitsCompleted,
+        bookingsCount,
+        score: mScore,
+        remainingKPI: mRemainingKPI,
+        estimatedDate: mProjections.estimatedDate,
+        estimatedValueAtEnd: mProjections.estimatedValueAtEnd,
+        performanceRank: mPerformanceRank,
+        motivationalStatus: mMotivationalStatus,
+        details: monthlyKPIResult.metricsDetails
+      };
+
       res.json({
         stats: {
           leadsWithoutFollowup,
@@ -805,7 +873,8 @@ async function startServer() {
           totalUsers: usersCountRes.count || 0,
           totalTeams: teamsCountRes.count || 0,
           totalLeads: leadsCountRes.count || 0,
-          totalLeadSources: sourcesCountRes.count || 0
+          totalLeadSources: sourcesCountRes.count || 0,
+          kpiJustification
         }
       });
     } catch (err: any) {
@@ -831,15 +900,21 @@ async function startServer() {
       const { data: allLeads } = await supabase.from('leads').select('id, full_name, phone, status').eq('company_id', companyId);
       const leadsMap = new Map((allLeads || []).map(l => [l.id, l]));
 
+      const activeStatusValues = [
+        LeadStatus.NEW, LeadStatus.ATTEMPTED, LeadStatus.CONNECTED, LeadStatus.FOLLOWUP_SCHEDULED,
+        LeadStatus.INTERESTED, LeadStatus.SITE_VISIT_SCHEDULED, LeadStatus.SITE_VISIT_DONE, LeadStatus.NEGOTIATION
+      ];
+
       if (cardId === 'leadsWithoutFollowup') {
-        const activeStatusValues = [
-          LeadStatus.NEW, LeadStatus.ATTEMPTED, LeadStatus.CONNECTED, LeadStatus.FOLLOWUP_SCHEDULED,
-          LeadStatus.INTERESTED, LeadStatus.SITE_VISIT_SCHEDULED, LeadStatus.SITE_VISIT_DONE, LeadStatus.NEGOTIATION
-        ];
-        let leadsQuery = supabase.from('leads').select('*').eq('company_id', companyId).in('status', activeStatusValues);
+        let leadsQuery = supabase.from('leads').select('*').eq('company_id', companyId);
         if (scopedUserIds) leadsQuery = leadsQuery.in('assigned_to', scopedUserIds);
         
-        const { data: activeLeads } = await leadsQuery;
+        const { data: leadsData } = await leadsQuery;
+        const activeLeads = (leadsData || []).filter(l => {
+          const computedStatus = l.status || LeadStatus.NEW;
+          return activeStatusValues.includes(computedStatus as LeadStatus);
+        });
+
         const { data: activeFollowups } = await supabase.from('followups').select('lead_id').eq('company_id', companyId).eq('completed', false);
         const pendingFollowupLeadIds = new Set((activeFollowups || []).map(f => f.lead_id));
 
@@ -849,21 +924,21 @@ async function startServer() {
           .in('status', ['scheduled', 'confirmed']);
         const activeSvLeadIds = new Set((activeSiteVisits || []).map(sv => sv.lead_id));
 
-        const resultLeads = (activeLeads || []).filter(l => !pendingFollowupLeadIds.has(l.id) && !activeSvLeadIds.has(l.id));
+        const resultLeads = activeLeads.filter(l => !pendingFollowupLeadIds.has(l.id) && !activeSvLeadIds.has(l.id));
         return res.json({ list: resultLeads });
       }
 
       if (cardId === 'siteVisitsToday' || cardId === 'upcomingSiteVisits') {
-        const activeStatusValues = [
-          LeadStatus.NEW, LeadStatus.ATTEMPTED, LeadStatus.CONNECTED, LeadStatus.FOLLOWUP_SCHEDULED,
-          LeadStatus.INTERESTED, LeadStatus.SITE_VISIT_SCHEDULED, LeadStatus.SITE_VISIT_DONE, LeadStatus.NEGOTIATION
-        ];
-        let leadsQuery = supabase.from('leads').select('id').eq('company_id', companyId).in('status', activeStatusValues);
+        let leadsQuery = supabase.from('leads').select('id, status').eq('company_id', companyId);
         if (scopedUserIds) {
           leadsQuery = leadsQuery.in('assigned_to', scopedUserIds);
         }
-        const { data: activeLeads } = await leadsQuery;
-        const activeLeadsIds = (activeLeads || []).map(l => l.id);
+        const { data: leadsData } = await leadsQuery;
+        const activeLeads = (leadsData || []).filter(l => {
+          const computedStatus = l.status || LeadStatus.NEW;
+          return activeStatusValues.includes(computedStatus as LeadStatus);
+        });
+        const activeLeadsIds = activeLeads.map(l => l.id);
 
         let svQuery = supabase.from('site_visits').select('*').eq('company_id', companyId).neq('status', 'cancelled');
         const { data: visits } = await svQuery;
@@ -893,16 +968,16 @@ async function startServer() {
         return res.json({ list: completedList });
       }
 
-      const activeStatusValues = [
-        LeadStatus.NEW, LeadStatus.ATTEMPTED, LeadStatus.CONNECTED, LeadStatus.FOLLOWUP_SCHEDULED,
-        LeadStatus.INTERESTED, LeadStatus.SITE_VISIT_SCHEDULED, LeadStatus.SITE_VISIT_DONE, LeadStatus.NEGOTIATION
-      ];
-      let leadsQuery = supabase.from('leads').select('id').eq('company_id', companyId).in('status', activeStatusValues);
+      let leadsQuery = supabase.from('leads').select('id, status').eq('company_id', companyId);
       if (scopedUserIds) {
         leadsQuery = leadsQuery.in('assigned_to', scopedUserIds);
       }
-      const { data: activeLeads } = await leadsQuery;
-      const activeLeadsIds = (activeLeads || []).map(l => l.id);
+      const { data: leadsData } = await leadsQuery;
+      const activeLeads = (leadsData || []).filter(l => {
+        const computedStatus = l.status || LeadStatus.NEW;
+        return activeStatusValues.includes(computedStatus as LeadStatus);
+      });
+      const activeLeadsIds = activeLeads.map(l => l.id);
 
       let fQuery = supabase.from('followups').select('*').eq('company_id', companyId).eq('completed', false);
       const { data: followups } = await fQuery;
@@ -1070,36 +1145,38 @@ async function startServer() {
       const followups = (followupRes.data || []).sort((a,b)=> new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
       const siteVisits = (visitRes.data || []).sort((a,b)=> new Date(b.scheduled_date + 'T' + b.scheduled_time).getTime() - new Date(a.scheduled_date + 'T' + a.scheduled_time).getTime());
 
-      // Logical Timeline generator
-      const timeline: any[] = [{
-        id: `created-${lead.id}`,
-        type: 'created',
-        title: 'Lead Inbound Created',
-        description: `Lead logged via source channel.`,
-        timestamp: lead.created_at,
-        userId: lead.created_by
-      }];
-
-      statusHistory.forEach(s => {
-        timeline.push({
-          id: s.id,
-          type: 'status_update',
-          title: `Status set to ${s.new_status}`,
-          description: s.remark,
-          timestamp: s.created_at,
-          userId: s.user_id
-        });
-      });
-
-      followups.forEach(f => {
-        timeline.push({
-          id: f.id,
-          type: 'followup',
-          title: `Follow-up scheduled (${f.type})`,
-          description: f.completed ? `Outcome notes: ${f.outcome_notes}` : `Agenda: ${f.notes}`,
-          timestamp: f.created_at,
-          userId: f.user_id
-        });
+      // Logical Timeline generator based on Activity Tracking Engine
+      const activities = await getActivities({ leadId: id });
+      const timeline = activities.map(act => {
+        let type = 'activity';
+        let title = act.activity_type;
+        if (act.activity_type === 'Lead Created') {
+          type = 'created';
+          title = 'Lead Inbound Created';
+        } else if (act.activity_type === 'Status Changed') {
+          type = 'status_update';
+          title = `Status set to ${act.new_status}`;
+        } else if (act.activity_type === 'Followup Added') {
+          type = 'followup';
+          title = 'Follow-up scheduled';
+        } else if (act.activity_type === 'Followup Completed') {
+          type = 'followup';
+          title = 'Follow-up completed';
+        } else if (act.activity_type === 'Site Visit Scheduled') {
+          type = 'site_visit';
+          title = 'Site Visit Scheduled';
+        } else if (act.activity_type === 'Site Visit Completed') {
+          type = 'site_visit';
+          title = 'Site Visit Completed';
+        }
+        return {
+          id: act.id,
+          type,
+          title,
+          description: act.notes || '',
+          timestamp: act.created_at,
+          userId: act.user_id
+        };
       });
 
       res.json({ lead, statusHistory, followups, siteVisits, timeline });
@@ -1149,6 +1226,33 @@ async function startServer() {
         previous_status: LeadStatus.NEW, new_status: LeadStatus.NEW, remark: initial_notes || 'Lead creation lock', created_at: new Date().toISOString()
       }]);
       if (statusErr) throw statusErr;
+
+      // Track Lead Created activity in immutable activity log
+      const creatorId = created_by || '11111111-1111-1111-1111-111111111111';
+      await trackActivity({
+        company_id: companyId,
+        lead_id: newId,
+        user_id: creatorId,
+        activity_type: 'Lead Created',
+        previous_status: undefined,
+        new_status: LeadStatus.NEW,
+        created_by: creatorId,
+        notes: initial_notes || 'Lead creation lock'
+      });
+
+      // Track Lead Assigned activity if assigned to someone
+      if (lead.assigned_to) {
+        await trackActivity({
+          company_id: companyId,
+          lead_id: newId,
+          user_id: lead.assigned_to,
+          activity_type: 'Lead Assigned',
+          previous_status: undefined,
+          new_status: LeadStatus.NEW,
+          created_by: creatorId,
+          notes: 'Lead assigned on creation'
+        });
+      }
 
       res.json({ success: true, lead });
     } catch (err: any) {
@@ -1202,6 +1306,20 @@ async function startServer() {
       if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
       const prevStatus = lead.status;
+
+      // Fetch uncompleted followups that will be auto-completed
+      const { data: priorFollowups } = await supabase
+        .from('followups')
+        .select('id')
+        .eq('lead_id', id)
+        .eq('completed', false);
+
+      // Fetch active site visits that will be visited or cancelled
+      const { data: priorVisits } = await supabase
+        .from('site_visits')
+        .select('id')
+        .eq('lead_id', id)
+        .in('status', [SiteVisitStatus.SCHEDULED, SiteVisitStatus.CONFIRMED]);
 
       // Update lead
       const leadUpdates: any = { status: new_status, updated_at: new Date().toISOString() };
@@ -1260,6 +1378,89 @@ async function startServer() {
         }]);
       }
 
+      // --- LOG ACTIVITIES TO ENGINE ---
+      // 1. Status Changed
+      await trackActivity({
+        company_id: lead.company_id,
+        lead_id: id,
+        user_id,
+        activity_type: 'Status Changed',
+        previous_status: prevStatus,
+        new_status,
+        notes: finalRemark
+      });
+
+      // 2. Remarks Added (since a remark was provided during status change)
+      await trackActivity({
+        company_id: lead.company_id,
+        lead_id: id,
+        user_id,
+        activity_type: 'Remarks Added',
+        notes: finalRemark
+      });
+
+      // 3. Followup Completed (for any auto-completed followups)
+      if (priorFollowups && priorFollowups.length > 0) {
+        for (const pf of priorFollowups) {
+          await trackActivity({
+            company_id: lead.company_id,
+            lead_id: id,
+            user_id,
+            activity_type: 'Followup Completed',
+            notes: `Completed automatically during status change to ${new_status}.`
+          });
+        }
+      }
+
+      // 4. Site Visit Completed or Cancelled (for any auto-updated visits)
+      if (priorVisits && priorVisits.length > 0) {
+        const isVisited = new_status === LeadStatus.SITE_VISIT_DONE;
+        for (const pv of priorVisits) {
+          await trackActivity({
+            company_id: lead.company_id,
+            lead_id: id,
+            user_id,
+            activity_type: isVisited ? 'Site Visit Completed' : 'Site Visit Cancelled',
+            notes: isVisited 
+              ? 'Site visit completed automatically due to status change.' 
+              : 'Site visit cancelled automatically due to status change.'
+          });
+        }
+      }
+
+      // 5. Followup Added (if a new followup is scheduled)
+      if (new_status === LeadStatus.FOLLOWUP_SCHEDULED || followup?.scheduled_at) {
+        await trackActivity({
+          company_id: lead.company_id,
+          lead_id: id,
+          user_id,
+          activity_type: 'Followup Added',
+          notes: `Followup type: ${followup?.type || 'Call'}. Scheduled for: ${followup?.scheduled_at || 'tomorrow'}. notes: ${followup?.notes || finalRemark}`
+        });
+      }
+
+      // 6. Site Visit Planned (if a new site visit is scheduled)
+      if (new_status === LeadStatus.SITE_VISIT_SCHEDULED || site_visit?.scheduled_date) {
+        await trackActivity({
+          company_id: lead.company_id,
+          lead_id: id,
+          user_id,
+          activity_type: 'Site Visit Planned',
+          notes: `Site visit scheduled for: ${site_visit?.scheduled_date || 'future'}. Time: ${site_visit?.scheduled_time || '14:00'}`
+        });
+      }
+
+      // 7. Booking Confirmed
+      if (new_status === LeadStatus.BOOKING_DONE) {
+        await trackActivity({
+          company_id: lead.company_id,
+          lead_id: id,
+          user_id,
+          activity_type: 'Booking Confirmed',
+          notes: `Booking completed. Amount: ${booking_amount || 50000}`
+        });
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1275,6 +1476,13 @@ async function startServer() {
       const supabase = getSupabase();
       const { data: lead } = await supabase.from('leads').select('*').eq('id', id).single();
       if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+
+      // Fetch uncompleted followups that will be auto-completed
+      const { data: priorFollowups } = await supabase
+        .from('followups')
+        .select('id')
+        .eq('lead_id', id)
+        .eq('completed', false);
 
       // Auto-complete older pending followups for this lead
       await supabase.from('followups')
@@ -1292,12 +1500,52 @@ async function startServer() {
       };
       await supabase.from('followups').insert([newF]);
 
+      const prevStatus = lead.status;
+      let statusChanged = false;
+
       if (lead.status === LeadStatus.NEW || lead.status === LeadStatus.ATTEMPTED) {
+        statusChanged = true;
         await supabase.from('leads').update({ status: LeadStatus.FOLLOWUP_SCHEDULED }).eq('id', id);
         await supabase.from('lead_status_updates').insert([{
           id: crypto.randomUUID(), lead_id: id, company_id: lead.company_id, user_id,
           previous_status: lead.status, new_status: LeadStatus.FOLLOWUP_SCHEDULED, remark: `Followup scheduled for ${scheduled_at}`, created_at: new Date().toISOString()
         }]);
+      }
+
+      // --- LOG ACTIVITIES TO ENGINE ---
+      // 1. Followup Added
+      await trackActivity({
+        company_id: lead.company_id,
+        lead_id: id,
+        user_id,
+        activity_type: 'Followup Added',
+        notes: `Followup scheduled: ${type} at ${scheduled_at}. Notes: ${notes || ''}`
+      });
+
+      // 2. Followup Completed (for any auto-completed followups)
+      if (priorFollowups && priorFollowups.length > 0) {
+        for (const pf of priorFollowups) {
+          await trackActivity({
+            company_id: lead.company_id,
+            lead_id: id,
+            user_id,
+            activity_type: 'Followup Completed',
+            notes: 'Completed automatically since a new followup was scheduled.'
+          });
+        }
+      }
+
+      // 3. Status Changed (if transitioned to FOLLOWUP_SCHEDULED)
+      if (statusChanged) {
+        await trackActivity({
+          company_id: lead.company_id,
+          lead_id: id,
+          user_id,
+          activity_type: 'Status Changed',
+          previous_status: prevStatus,
+          new_status: LeadStatus.FOLLOWUP_SCHEDULED,
+          notes: `Followup scheduled for ${scheduled_at}`
+        });
       }
 
       res.json({ success: true, followup: newF });
@@ -1310,12 +1558,31 @@ async function startServer() {
     const { id } = req.params;
     const { outcome_notes, completed } = req.body;
     try {
-      const { data, error } = await getSupabase().from('followups').update({
+      const supabase = getSupabase();
+      
+      // Fetch followup details first to get the context (lead_id, company_id, user_id)
+      const { data: f } = await supabase.from('followups').select('*').eq('id', id).single();
+      if (!f) return res.status(404).json({ error: 'Followup entry not found.' });
+
+      const { data, error } = await supabase.from('followups').update({
         completed: completed !== undefined ? completed : true,
         outcome_notes: outcome_notes || '',
         completed_at: new Date().toISOString()
       }).eq('id', id).select().single();
       if (error) throw error;
+
+      // --- LOG ACTIVITY TO ENGINE ---
+      const isCompleted = completed !== undefined ? completed : true;
+      if (isCompleted) {
+        await trackActivity({
+          company_id: f.company_id,
+          lead_id: f.lead_id,
+          user_id: f.user_id,
+          activity_type: 'Followup Completed',
+          notes: outcome_notes || 'Followup marked completed manually.'
+        });
+      }
+
       res.json({ success: true, followup: data });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1332,6 +1599,13 @@ async function startServer() {
       const { data: lead } = await supabase.from('leads').select('*').eq('id', id).single();
       if (!lead) return res.status(404).json({ error: 'Lead not found.' });
 
+      // Fetch active site visits that will be cancelled
+      const { data: priorVisits } = await supabase
+        .from('site_visits')
+        .select('id')
+        .eq('lead_id', id)
+        .in('status', [SiteVisitStatus.SCHEDULED, SiteVisitStatus.CONFIRMED]);
+
       // Automatically cancel any prior active/scheduled site visits for this lead
       await supabase.from('site_visits')
         .update({ status: SiteVisitStatus.CANCELLED })
@@ -1345,11 +1619,46 @@ async function startServer() {
       };
       await supabase.from('site_visits').insert([visit]);
 
+      const prevStatus = lead.status;
       await supabase.from('leads').update({ status: LeadStatus.SITE_VISIT_SCHEDULED }).eq('id', id);
       await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: id, company_id: lead.company_id, user_id,
         previous_status: lead.status, new_status: LeadStatus.SITE_VISIT_SCHEDULED, remark: `Site visit planned for ${scheduled_date}`, created_at: new Date().toISOString()
       }]);
+
+      // --- LOG ACTIVITIES TO ENGINE ---
+      // 1. Site Visit Planned
+      await trackActivity({
+        company_id: lead.company_id,
+        lead_id: id,
+        user_id,
+        activity_type: 'Site Visit Planned',
+        notes: `Site visit scheduled for: ${scheduled_date} at ${scheduled_time}. Visitors: ${visitors_count}. Transport: ${transport_arranged ? 'Yes' : 'No'}. Notes: ${notes || ''}`
+      });
+
+      // 2. Site Visit Cancelled (for older active visits that got auto-cancelled)
+      if (priorVisits && priorVisits.length > 0) {
+        for (const pv of priorVisits) {
+          await trackActivity({
+            company_id: lead.company_id,
+            lead_id: id,
+            user_id,
+            activity_type: 'Site Visit Cancelled',
+            notes: 'Cancelled automatically because a new site visit was planned.'
+          });
+        }
+      }
+
+      // 3. Status Changed
+      await trackActivity({
+        company_id: lead.company_id,
+        lead_id: id,
+        user_id,
+        activity_type: 'Status Changed',
+        previous_status: prevStatus,
+        new_status: LeadStatus.SITE_VISIT_SCHEDULED,
+        notes: `Site visit planned for ${scheduled_date}`
+      });
 
       res.json({ success: true, siteVisit: visit });
     } catch (err: any) {
@@ -1368,9 +1677,14 @@ async function startServer() {
       const { data: sv } = await supabase.from('site_visits').update(updates).eq('id', id).select().single();
       if (!sv) return res.status(404).json({ error: 'Visit entry not found' });
 
+      let leadStatusTransitioned = false;
+      let prevStatus = '';
+
       if (status === SiteVisitStatus.VISITED) {
         const { data: lead } = await supabase.from('leads').select('*').eq('id', sv.lead_id).single();
         if (lead && lead.status !== LeadStatus.BOOKING_DONE) {
+          leadStatusTransitioned = true;
+          prevStatus = lead.status;
           await supabase.from('leads').update({ status: LeadStatus.SITE_VISIT_DONE }).eq('id', sv.lead_id);
           await supabase.from('lead_status_updates').insert([{
             id: crypto.randomUUID(), lead_id: sv.lead_id, company_id: sv.company_id, user_id: user_id || sv.user_id,
@@ -1378,6 +1692,42 @@ async function startServer() {
           }]);
         }
       }
+
+      // --- LOG ACTIVITIES TO ENGINE ---
+      const userIdToLog = user_id || sv.user_id;
+      if (status === SiteVisitStatus.VISITED) {
+        // 1. Site Visit Completed
+        await trackActivity({
+          company_id: sv.company_id,
+          lead_id: sv.lead_id,
+          user_id: userIdToLog,
+          activity_type: 'Site Visit Completed',
+          notes: feedback || 'Site visited successfully.'
+        });
+
+        // 2. Status Changed (if transitioned to SITE_VISIT_DONE)
+        if (leadStatusTransitioned) {
+          await trackActivity({
+            company_id: sv.company_id,
+            lead_id: sv.lead_id,
+            user_id: userIdToLog,
+            activity_type: 'Status Changed',
+            previous_status: prevStatus,
+            new_status: LeadStatus.SITE_VISIT_DONE,
+            notes: `Site visited: ${feedback || 'Success'}`
+          });
+        }
+      } else if (status === SiteVisitStatus.CANCELLED) {
+        // Site Visit Cancelled
+        await trackActivity({
+          company_id: sv.company_id,
+          lead_id: sv.lead_id,
+          user_id: userIdToLog,
+          activity_type: 'Site Visit Cancelled',
+          notes: feedback || 'Site visit was cancelled.'
+        });
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1401,6 +1751,20 @@ async function startServer() {
           previous_status: l.status, new_status: l.status, remark: `Reassigned assignment to user: ${targetUserId}`, created_at: new Date().toISOString()
         }));
         await supabase.from('lead_status_updates').insert(insertions);
+
+        // --- LOG ACTIVITIES TO ENGINE ---
+        for (const l of leads) {
+          await trackActivity({
+            company_id: l.company_id,
+            lead_id: l.id,
+            user_id: targetUserId,
+            activity_type: 'Lead Assigned',
+            previous_status: l.status,
+            new_status: l.status,
+            created_by: managerId || targetUserId,
+            notes: `Bulk reassigned to user: ${targetUserId}`
+          });
+        }
       }
       res.json({ success: true, count: leads?.length || 0 });
     } catch (err: any) {
@@ -1450,6 +1814,45 @@ async function startServer() {
             scheduled_at: l.followupDate, type: 'Call', notes: 'Automated import followup log trigger', completed: false, created_at: new Date().toISOString()
           }]);
         }
+
+        // --- LOG ACTIVITIES TO ENGINE ---
+        // 1. Lead Created
+        await trackActivity({
+          company_id: companyId,
+          lead_id: leadId,
+          user_id: createdBy,
+          activity_type: 'Lead Created',
+          previous_status: undefined,
+          new_status: obj.status,
+          created_by: createdBy,
+          notes: 'Imported via bulk sheet'
+        });
+
+        // 2. Lead Assigned (if assigned to someone)
+        if (obj.assigned_to) {
+          await trackActivity({
+            company_id: companyId,
+            lead_id: leadId,
+            user_id: obj.assigned_to,
+            activity_type: 'Lead Assigned',
+            previous_status: undefined,
+            new_status: obj.status,
+            created_by: createdBy,
+            notes: 'Assigned on bulk import'
+          });
+        }
+
+        // 3. Followup Added (if scheduled)
+        if (l.followupDate) {
+          await trackActivity({
+            company_id: companyId,
+            lead_id: leadId,
+            user_id: obj.assigned_to,
+            activity_type: 'Followup Added',
+            notes: `Import followup scheduled for: ${l.followupDate}`
+          });
+        }
+
         importedCount++;
         existingPhones.add(l.phone.trim());
       }
@@ -1471,6 +1874,20 @@ async function startServer() {
           previous_status: l.status, new_status: targetStatus, remark: 'Updated bulk status locks.', created_at: new Date().toISOString()
         }));
         await supabase.from('lead_status_updates').insert(insertions);
+
+        // --- LOG ACTIVITIES TO ENGINE ---
+        for (const l of leads) {
+          await trackActivity({
+            company_id: l.company_id,
+            lead_id: l.id,
+            user_id,
+            activity_type: 'Status Changed',
+            previous_status: l.status,
+            new_status: targetStatus,
+            created_by: user_id,
+            notes: 'Updated via bulk action'
+          });
+        }
       }
       res.json({ success: true, count: leads?.length || 0 });
     } catch (err: any) {
@@ -1655,6 +2072,35 @@ async function startServer() {
       if (statusErr) throw statusErr;
 
       await supabase.from('cold_data').update({ converted_lead_id: leadId, status: ColdStatus.CONVERTED_TO_LEAD }).eq('id', id);
+
+      // --- LOG ACTIVITIES TO ENGINE ---
+      const creatorId = user_id || '11111111-1111-1111-1111-111111111111';
+      // 1. Lead Created
+      await trackActivity({
+        company_id: record.company_id,
+        lead_id: leadId,
+        user_id: creatorId,
+        activity_type: 'Lead Created',
+        previous_status: undefined,
+        new_status: LeadStatus.NEW,
+        created_by: creatorId,
+        notes: notes || 'Converted call database logging'
+      });
+
+      // 2. Lead Assigned (if assigned to someone)
+      if (lead.assigned_to) {
+        await trackActivity({
+          company_id: record.company_id,
+          lead_id: leadId,
+          user_id: lead.assigned_to,
+          activity_type: 'Lead Assigned',
+          previous_status: undefined,
+          new_status: LeadStatus.NEW,
+          created_by: creatorId,
+          notes: 'Lead assigned during conversion'
+        });
+      }
+
       res.json({ success: true, lead });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1909,6 +2355,30 @@ async function startServer() {
   });
 
 
+  // --- ACTIVITIES MODULE ENDPOINT ---
+  app.get('/api/activities', async (req, res) => {
+    try {
+      const companyId = req.query.companyId as string || undefined;
+      const userId = req.query.userId as string || undefined;
+      const leadId = req.query.leadId as string || undefined;
+      const startDate = req.query.startDate as string || undefined;
+      const endDate = req.query.endDate as string || undefined;
+
+      const list = await getActivities({
+        companyId,
+        userId,
+        leadId,
+        startDate,
+        endDate
+      });
+
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+
   // --- 6. REPORTING DASHBOARD ENDPOINT ---
   app.get('/api/reports', async (req, res) => {
     const companyId = req.query.companyId as string || '99999999-9999-9999-9999-999999999999';
@@ -1920,7 +2390,12 @@ async function startServer() {
     let startStr = today.toISOString().split('T')[0];
     let endStr = startStr;
 
-    if (preset === 'this_week') {
+    if (preset === 'yesterday') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      startStr = yesterday.toISOString().split('T')[0];
+      endStr = startStr;
+    } else if (preset === 'this_week') {
       const distance = today.getDay() === 0 ? -6 : 1 - today.getDay();
       const monday = new Date(today.setDate(today.getDate() + distance));
       const sunday = new Date(monday.setDate(monday.getDate() + 6));
@@ -1936,40 +2411,163 @@ async function startServer() {
 
     try {
       const supabase = getSupabase();
-      
+
+      // Resolve roles and scopes accurately to determine query filters
+      let activeRole = UserRole.SALES_EXECUTIVE;
+      let activeTeamId: string | null = null;
+      if (filterUserId) {
+        const { data: pData } = await supabase.from('profiles').select('role, team_id').eq('id', filterUserId).maybeSingle();
+        if (pData) {
+          activeRole = pData.role as UserRole;
+          activeTeamId = pData.team_id;
+        }
+      }
+
+      let scopedUserIds: string[] | null = null;
+      if (activeRole === UserRole.TEAM_LEADER && activeTeamId) {
+        const { data: teamProfiles } = await supabase.from('profiles').select('id').eq('team_id', activeTeamId);
+        scopedUserIds = (teamProfiles || []).map(tp => tp.id);
+        if (filterUserId && !scopedUserIds.includes(filterUserId)) {
+          scopedUserIds.push(filterUserId);
+        }
+      } else if (activeRole === UserRole.SALES_EXECUTIVE && filterUserId) {
+        scopedUserIds = [filterUserId];
+      }
+
+      // 1. Fetch scoped profiles (avoids duplicate/random company profile leaks)
+      let pQuery = supabase.from('profiles').select('*').eq('company_id', companyId);
+      if (scopedUserIds) {
+        pQuery = pQuery.in('id', scopedUserIds);
+      }
+      const { data: profilesData } = await pQuery;
+      const profiles = profilesData || [];
+      const profileIds = profiles.map(p => p.id);
+
+      // 2. Fetch scoped Updates
       let uQuery = supabase.from('lead_status_updates').select('*').eq('company_id', companyId).gte('created_at', `${startStr}T00:00:00.000Z`).lte('created_at', `${endStr}T23:59:59.999Z`);
-      if (filterUserId) uQuery = uQuery.eq('user_id', filterUserId);
+      if (scopedUserIds) uQuery = uQuery.in('user_id', profileIds);
       const { data: updatesData } = await uQuery;
       const updates = updatesData || [];
 
+      // 3. Fetch scoped Followups
       let fQuery = supabase.from('followups').select('*').eq('company_id', companyId).gte('scheduled_at', `${startStr}T00:00:00.000Z`).lte('scheduled_at', `${endStr}T23:59:59.999Z`);
-      if (filterUserId) fQuery = fQuery.eq('user_id', filterUserId);
+      if (scopedUserIds) fQuery = fQuery.in('user_id', profileIds);
       const { data: followupsData } = await fQuery;
       const sortedFollowups = followupsData || [];
 
+      // 4. Fetch scoped Site Visits
       let vQuery = supabase.from('site_visits').select('*').eq('company_id', companyId).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
-      if (filterUserId) vQuery = vQuery.eq('user_id', filterUserId);
+      if (scopedUserIds) vQuery = vQuery.in('user_id', profileIds);
       if (filterProjectId) vQuery = vQuery.eq('project_id', filterProjectId);
       const { data: visitsData } = await vQuery;
       const visits = visitsData || [];
 
+      // 5. Fetch scoped Leads
       let leadsQuery = supabase.from('leads').select('*').eq('company_id', companyId);
-      if (filterUserId) leadsQuery = leadsQuery.eq('assigned_to', filterUserId);
+      if (scopedUserIds) leadsQuery = leadsQuery.in('assigned_to', profileIds);
       const { data: leadsData } = await leadsQuery;
       let targetLeads = leadsData || [];
       if (filterProjectId) targetLeads = targetLeads.filter(l => l.project_interests && l.project_interests.includes(filterProjectId));
 
+      // Fast Map index setup for in-memory resolution of leads per activity (No N+1 query loop!)
+      const leadMap = new Map(targetLeads.map(l => [l.id, l]));
+      const getLeadsFromIds = (ids: string[]) => {
+        return Array.from(new Set(ids)).map(id => leadMap.get(id)).filter(Boolean);
+      };
+
+      // Fully pre-cache drill down lead mappings for KPI categories
+      const kpiLeads = {
+        calls_attempted: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.ATTEMPTED).map(u => u.lead_id)),
+        calls_connected: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.CONNECTED).map(u => u.lead_id)),
+        followups_planned: getLeadsFromIds(sortedFollowups.map(f => f.lead_id)),
+        followups_completed: getLeadsFromIds(sortedFollowups.filter(f => f.completed).map(f => f.lead_id)),
+        site_visits_planned: getLeadsFromIds(visits.map(v => v.lead_id)),
+        site_visits_completed: getLeadsFromIds(visits.filter(v => v.status === 'visited').map(v => v.lead_id)),
+        bookings: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).map(u => u.lead_id))
+      };
+
+      // Totals calculation
       const totalCalls = updates.filter(u => ['attempted', 'connected'].some(s => (u.new_status || '').toLowerCase().includes(s))).length;
       const followupsCompleted = sortedFollowups.filter(f => f.completed).length;
       const siteVisitsCompleted = visits.filter(v => v.status === 'visited').length;
       const interestedLeads = updates.filter(u => u.new_status === LeadStatus.INTERESTED).length;
       const bookings = updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).length;
 
+      const callsAttempted = updates.filter(u => u.new_status === LeadStatus.ATTEMPTED).length;
+      const callsConnected = updates.filter(u => u.new_status === LeadStatus.CONNECTED).length;
+      const followupsPlanned = sortedFollowups.length;
+      const siteVisitsPlanned = visits.length;
+
       const bookedIds = updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).map(u => u.lead_id);
       const revenueGenerated = targetLeads.filter(l => bookedIds.includes(l.id) && l.booking_amount).reduce((sum, l) => sum + Number(l.booking_amount), 0);
 
-      const teamUsers = await supabase.from('profiles').select('*').eq('company_id', companyId);
-      const teamReport = (teamUsers.data || []).map(u => {
+      // KPI Engine Calculation logic for current scope
+      const currentKPIResult = kpiEngine.calculateKPI({
+        visitsPlanned: siteVisitsPlanned,
+        visitsCompleted: siteVisitsCompleted,
+        bookingsCount: bookings,
+        revenueGenerated
+      });
+
+      const score = currentKPIResult.score;
+      const remainingKPI = Number((100 - score).toFixed(2));
+      const projections = kpiEngine.getEstimatedCompletion(score, startStr, endStr);
+      const performanceRank = kpiEngine.getPerformanceRank(score);
+      const motivationalStatus = kpiEngine.getMotivationalStatus(score);
+
+      // Construct a single, cached KPI Justification Object
+      const kpiJustification: any = {
+        role: activeRole,
+        monthlySalaryTarget: activeRole === UserRole.TEAM_LEADER ? 100000 : 50000,
+        monthlySalesTarget: activeRole === UserRole.TEAM_LEADER ? 'Team Performance Based' : 10000000,
+        visitsPlanned: siteVisitsPlanned,
+        visitsCompleted: siteVisitsCompleted,
+        bookingsCount: bookings,
+        revenueGenerated,
+        score,
+        remainingKPI,
+        estimatedDate: projections.estimatedDate,
+        estimatedValueAtEnd: projections.estimatedValueAtEnd,
+        performanceRank,
+        motivationalStatus,
+        details: currentKPIResult.metricsDetails
+      };
+
+      // Aggregates for individual Team Leaders' Sales Executives
+      if (activeRole === UserRole.TEAM_LEADER) {
+        const teamMembers = profiles.map(p => {
+          const pUpdates = updates.filter(u => u.user_id === p.id);
+          const pVisits = visits.filter(v => v.user_id === p.id);
+          const pBookings = pUpdates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).length;
+          const pVisitsPlanned = pVisits.length;
+          const pVisitsCompleted = pVisits.filter(v => v.status === 'visited').length;
+          const pRevenue = targetLeads.filter(l => l.assigned_to === p.id && pUpdates.some(u => u.lead_id === l.id && u.new_status === LeadStatus.BOOKING_DONE) && l.booking_amount).reduce((sum, l) => sum + Number(l.booking_amount), 0);
+          
+          const pKpi = kpiEngine.calculateKPI({
+            visitsPlanned: pVisitsPlanned,
+            visitsCompleted: pVisitsCompleted,
+            bookingsCount: pBookings,
+            revenueGenerated: pRevenue
+          });
+
+          return {
+            id: p.id,
+            fullName: p.full_name,
+            avatarUrl: p.avatar_url,
+            score: pKpi.score,
+            visitsPlanned: pVisitsPlanned,
+            visitsCompleted: pVisitsCompleted,
+            bookingsCount: pBookings,
+            performanceRank: kpiEngine.getPerformanceRank(pKpi.score),
+            motivationalStatus: kpiEngine.getMotivationalStatus(pKpi.score)
+          };
+        });
+
+        kpiJustification.teamMembers = teamMembers;
+      }
+
+      // Setup team report leaderboard data
+      const teamReport = profiles.map(u => {
         const uUpdates = updates.filter(up => up.user_id === u.id);
         const b = uUpdates.filter(up => up.new_status === LeadStatus.BOOKING_DONE).length;
         const c = uUpdates.filter(up => ['attempted', 'connected'].some(s => (up.new_status || '').toLowerCase().includes(s))).length;
@@ -1982,7 +2580,22 @@ async function startServer() {
 
       res.json({
         report: {
-          summary: { totalCalls, followupsDone: followupsCompleted, followupsScheduled: sortedFollowups.length, siteVisitsPlanned: visits.length, siteVisitsCompleted, interestedLeads, bookings, revenueGenerated }
+          summary: { 
+            totalCalls, 
+            followupsDone: followupsCompleted, 
+            followupsScheduled: sortedFollowups.length, 
+            siteVisitsPlanned: siteVisitsPlanned, 
+            siteVisitsCompleted, 
+            interestedLeads, 
+            bookings, 
+            revenueGenerated,
+            callsAttempted,
+            callsConnected,
+            followupsPlanned,
+            followupsCompleted
+          },
+          kpiLeads,
+          kpiJustification
         },
         totals: { 
           leads: targetLeads.length, 
@@ -1996,8 +2609,96 @@ async function startServer() {
           siteVisitVisited: siteVisitsCompleted, 
           booked: bookings 
         },
-        leaderboard: teamReport.map(t => ({ id: t.userId, full_name: t.fullName, role: t.role, bookingsCount: t.bookingsCount, visitsCount: t.totalCalls }))
+        leaderboard: teamReport.map(t => ({ id: t.userId, full_name: t.fullName, role: t.role, bookingsCount: t.bookingsCount, visitsCount: t.totalCalls })),
+        kpiLeads,
+        kpiJustification
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+
+  app.get('/api/reports/kpi-leads', async (req, res) => {
+    const companyId = req.query.companyId as string || '99999999-9999-9999-9999-999999999999';
+    const filterUserId = req.query.userId as string || undefined;
+    const filterProjectId = req.query.projectId as string || undefined;
+    const preset = req.query.preset as string || 'today';
+    const kpi = req.query.kpi as string; // 'calls_attempted', 'calls_connected', 'followups_planned', 'followups_completed', 'site_visits_planned', 'site_visits_completed', 'bookings'
+
+    const today = new Date();
+    let startStr = today.toISOString().split('T')[0];
+    let endStr = startStr;
+
+    if (preset === 'yesterday') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      startStr = yesterday.toISOString().split('T')[0];
+      endStr = startStr;
+    } else if (preset === 'this_week') {
+      const distance = today.getDay() === 0 ? -6 : 1 - today.getDay();
+      const monday = new Date(today.setDate(today.getDate() + distance));
+      const sunday = new Date(monday.setDate(monday.getDate() + 6));
+      startStr = monday.toISOString().split('T')[0];
+      endStr = sunday.toISOString().split('T')[0];
+    } else if (preset === 'this_month') {
+      startStr = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+      endStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+    } else if (preset === 'custom') {
+      startStr = (req.query.start as string) || startStr;
+      endStr = (req.query.end as string) || endStr;
+    }
+
+    try {
+      const supabase = getSupabase();
+
+      // Fetch all leads first for mapping
+      let leadsQuery = supabase.from('leads').select('*').eq('company_id', companyId);
+      if (filterUserId) leadsQuery = leadsQuery.eq('assigned_to', filterUserId);
+      const { data: leadsData } = await leadsQuery;
+      let targetLeads = leadsData || [];
+      if (filterProjectId) {
+        targetLeads = targetLeads.filter(l => l.project_interests && l.project_interests.includes(filterProjectId));
+      }
+      const leadMap = new Map(targetLeads.map(l => [l.id, l]));
+
+      let resultLeads: any[] = [];
+
+      if (kpi === 'calls_attempted' || kpi === 'calls_connected' || kpi === 'bookings') {
+        let targetStatus = '';
+        if (kpi === 'calls_attempted') targetStatus = LeadStatus.ATTEMPTED;
+        if (kpi === 'calls_connected') targetStatus = LeadStatus.CONNECTED;
+        if (kpi === 'bookings') targetStatus = LeadStatus.BOOKING_DONE;
+
+        let uQuery = supabase.from('lead_status_updates').select('lead_id').eq('company_id', companyId).eq('new_status', targetStatus).gte('created_at', `${startStr}T00:00:00.000Z`).lte('created_at', `${endStr}T23:59:59.999Z`);
+        if (filterUserId) uQuery = uQuery.eq('user_id', filterUserId);
+        const { data: updatesData } = await uQuery;
+        const leadIds = Array.from(new Set((updatesData || []).map(u => u.lead_id)));
+        resultLeads = leadIds.map(id => leadMap.get(id)).filter(Boolean);
+      } else if (kpi === 'followups_planned' || kpi === 'followups_completed') {
+        let fQuery = supabase.from('followups').select('lead_id, completed').eq('company_id', companyId).gte('scheduled_at', `${startStr}T00:00:00.000Z`).lte('scheduled_at', `${endStr}T23:59:59.999Z`);
+        if (filterUserId) fQuery = fQuery.eq('user_id', filterUserId);
+        const { data: followupsData } = await fQuery;
+        let filtered = followupsData || [];
+        if (kpi === 'followups_completed') {
+          filtered = filtered.filter(f => f.completed);
+        }
+        const leadIds = Array.from(new Set(filtered.map(f => f.lead_id)));
+        resultLeads = leadIds.map(id => leadMap.get(id)).filter(Boolean);
+      } else if (kpi === 'site_visits_planned' || kpi === 'site_visits_completed') {
+        let vQuery = supabase.from('site_visits').select('lead_id, status').eq('company_id', companyId).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
+        if (filterUserId) vQuery = vQuery.eq('user_id', filterUserId);
+        if (filterProjectId) vQuery = vQuery.eq('project_id', filterProjectId);
+        const { data: visitsData } = await vQuery;
+        let filtered = visitsData || [];
+        if (kpi === 'site_visits_completed') {
+          filtered = filtered.filter(v => v.status === 'visited');
+        }
+        const leadIds = Array.from(new Set(filtered.map(v => v.lead_id)));
+        resultLeads = leadIds.map(id => leadMap.get(id)).filter(Boolean);
+      }
+
+      res.json({ list: resultLeads });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

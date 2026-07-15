@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { 
-  User, Lead, ColdData, Project, ProjectConfiguration, DashboardStats, UserRole, LeadSource 
+  User, Lead, ColdData, Project, ProjectConfiguration, DashboardStats, UserRole, LeadSource, Activity 
 } from '../types';
 
 interface AppState {
@@ -15,7 +15,7 @@ interface AppState {
   isLoadingUsers: boolean;
   
   // Navigation & UI Tabs
-  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources';
+  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources' | 'activity-history' | 'ai-coach';
   activeLeadId: string | null;
   activeProjectId: string | null;
   activeDrawerCard: string | null;
@@ -44,9 +44,12 @@ interface AppState {
   } | null;
 
   leadSources: LeadSource[];
+  activities: Activity[];
+  isLoadingActivities: boolean;
+  fetchActivities: (filters?: { companyId?: string; userId?: string; leadId?: string; startDate?: string; endDate?: string }) => Promise<void>;
 
   reportsData: any;
-  reportsPreset: 'today' | 'this_week' | 'this_month' | 'custom';
+  reportsPreset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
   reportsFilterUserId: string;
   reportsFilterProjectId: string;
   reportsCustomDates: { start: string; end: string };
@@ -161,6 +164,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   activeProjectDetails: null,
   leadSources: [],
+  activities: [],
+  isLoadingActivities: false,
 
   reportsData: null,
   reportsPreset: 'today',
@@ -1051,6 +1056,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false;
     } finally {
       set({ isLoading: false });
+    }
+  },
+
+  fetchActivities: async (filters) => {
+    const user = get().activeUser;
+    if (!user) return;
+    set({ isLoadingActivities: true, error: null });
+    try {
+      const companyId = filters?.companyId || user.company_id;
+      let url = `/api/activities?companyId=${companyId}`;
+      if (filters?.userId) url += `&userId=${filters.userId}`;
+      if (filters?.leadId) url += `&leadId=${filters.leadId}`;
+      if (filters?.startDate) url += `&startDate=${filters.startDate}`;
+      if (filters?.endDate) url += `&endDate=${filters.endDate}`;
+      
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        set({ activities: data || [] });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      set({ isLoadingActivities: false });
     }
   },
 

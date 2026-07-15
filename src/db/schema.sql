@@ -206,6 +206,21 @@ CREATE TABLE site_visits (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Table: activities
+CREATE TABLE activities (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
+  team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+  activity_type TEXT NOT NULL,
+  previous_status TEXT,
+  new_status TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  notes TEXT
+);
+
 
 -- 3. KEY DATABASE INDEXES
 -- Profiles Indexes
@@ -233,6 +248,11 @@ CREATE INDEX idx_status_updates_user_date ON lead_status_updates (user_id, creat
 CREATE INDEX idx_cold_data_phone ON cold_data (company_id, phone);
 CREATE INDEX idx_project_configurations_proj ON project_configurations (project_id);
 
+-- Activities Indexes
+CREATE INDEX idx_activities_lead_id ON activities (lead_id);
+CREATE INDEX idx_activities_company_type_date ON activities (company_id, activity_type, created_at);
+CREATE INDEX idx_activities_user_date ON activities (user_id, created_at);
+
 
 -- 4. ROW-LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
@@ -246,6 +266,7 @@ ALTER TABLE followups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lead_status_updates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE project_configurations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
 
 -- Dynamic helper functions for custom checks
 CREATE OR REPLACE FUNCTION get_current_user_role()
@@ -351,4 +372,13 @@ CREATE POLICY policy_companies_access ON companies
   FOR ALL TO authenticated
   USING (
     id = get_current_user_company_id()
+  );
+
+-- Activities Policies
+CREATE POLICY policy_activities_access ON activities
+  FOR ALL TO authenticated
+  USING (
+    (get_current_user_role() = 'company_admin' AND company_id = get_current_user_company_id()) OR
+    (get_current_user_role() = 'team_leader' AND user_id IN (SELECT id FROM profiles WHERE team_id = get_current_user_team_id())) OR
+    (user_id = auth.uid())
   );
