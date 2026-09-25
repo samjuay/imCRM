@@ -10,7 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getSupabase, getSupabaseAdmin, getServerUserSupabase } from './src/db/supabaseClient';
 import { UserRole, LeadStatus, ColdStatus, SiteVisitStatus, Lead, ColdData } from './src/types';
 import { trackActivity, getActivities } from './src/db/activitiesStore';
-import { getLeadRemarks, addLeadRemark, getBatchLeadRemarks, getLatestLeadRemarkText, deleteLeadRemarks } from './src/db/leadRemarksStore';
+import { getLeadRemarks, getLeadRemarksAsync, addLeadRemark, getBatchLeadRemarks, getLatestLeadRemarkText, deleteLeadRemarks, extractCleanUserRemark } from './src/db/leadRemarksStore';
 import { LeadRemark } from './src/types';
 import { kpiEngine } from './src/lib/kpiEngine';
 import dotenv from 'dotenv';
@@ -1256,7 +1256,7 @@ async function startServer() {
 
       // Retrieve matching lead source name for the individual lead details view
       const { data: sourceObj } = await supabase.from('lead_sources').select('name').eq('id', leadRaw.source_id).maybeSingle();
-      const remarksList = getLeadRemarks(id);
+      const remarksList = await getLeadRemarksAsync(id);
       const latestRemark = remarksList[0]?.remark_text || (typeof leadRaw.remarks === 'string' ? leadRaw.remarks : '');
       const lead = {
         ...leadRaw,
@@ -1448,7 +1448,7 @@ async function startServer() {
         data = currentLead;
       }
 
-      const remarksList = getLeadRemarks(id);
+      const remarksList = await getLeadRemarksAsync(id);
       res.json({ success: true, lead: { ...data, remarks: remarksList[0]?.remark_text || '' }, remarks: remarksList });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1459,7 +1459,7 @@ async function startServer() {
   app.get('/api/leads/:id/remarks', async (req, res) => {
     const { id } = req.params;
     try {
-      const remarks = getLeadRemarks(id);
+      const remarks = await getLeadRemarksAsync(id);
       res.json({ success: true, lead_id: id, remarks });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1497,7 +1497,7 @@ async function startServer() {
         outcome_at_creation
       });
 
-      const allRemarks = getLeadRemarks(id);
+      const allRemarks = await getLeadRemarksAsync(id);
       res.json({ success: true, lead_id: id, remark: newRemark, remarks: allRemarks });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1601,16 +1601,9 @@ async function startServer() {
       }
 
       // Append immutable user remark to lead_remarks
-      let cleanRemark = (req.body.remark_text || '').trim();
+      let cleanRemark = extractCleanUserRemark(req.body.remark_text);
       if (!cleanRemark) {
-        const raw = (remark || notes || '').trim();
-        if (raw.includes(' | Remarks: ')) {
-          cleanRemark = raw.split(' | Remarks: ').slice(1).join(' | Remarks: ').trim();
-        } else if (raw.startsWith('Remarks: ')) {
-          cleanRemark = raw.replace(/^Remarks:\s*/, '').trim();
-        } else {
-          cleanRemark = raw;
-        }
+        cleanRemark = extractCleanUserRemark(remark || notes || '');
       }
 
       if (cleanRemark) {

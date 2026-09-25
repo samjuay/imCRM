@@ -235,6 +235,19 @@ CREATE TABLE activities (
   notes TEXT
 );
 
+-- Table: lead_remarks (Immutable, Append-Only Customer Remarks History)
+CREATE TABLE lead_remarks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  remark_text TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_by_name TEXT,
+  source TEXT NOT NULL DEFAULT 'direct_entry',
+  status_at_creation TEXT,
+  outcome_at_creation TEXT
+);
+
 
 -- 3. KEY DATABASE INDEXES
 -- Profiles Indexes
@@ -245,6 +258,11 @@ CREATE INDEX idx_profiles_team ON profiles (team_id);
 CREATE INDEX idx_leads_company_status ON leads (company_id, status);
 CREATE INDEX idx_leads_assigned_to ON leads (assigned_to);
 CREATE INDEX idx_leads_source_id ON leads (source_id);
+
+-- Lead Remarks Indexes
+CREATE INDEX idx_lead_remarks_lead_id ON lead_remarks (lead_id);
+CREATE INDEX idx_lead_remarks_created_at ON lead_remarks (created_at DESC);
+CREATE INDEX idx_lead_remarks_created_by ON lead_remarks (created_by);
 
 -- Followups Indexes
 CREATE INDEX idx_followups_lead_id ON followups (lead_id);
@@ -400,3 +418,13 @@ CREATE POLICY policy_activities_access ON activities
     (get_current_user_role() = 'team_leader' AND user_id IN (SELECT id FROM profiles WHERE team_id = get_current_user_team_id())) OR
     (user_id = auth.uid())
   );
+
+-- Lead Remarks Policies (Immutable Append-Only Customer Remarks History)
+CREATE POLICY policy_lead_remarks_select ON lead_remarks
+  FOR SELECT TO authenticated
+  USING (true);
+
+CREATE POLICY policy_lead_remarks_insert ON lead_remarks
+  FOR INSERT TO authenticated
+  WITH CHECK (true);
+

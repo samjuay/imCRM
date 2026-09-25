@@ -13,59 +13,244 @@ const REMARKS_STORE_PATH = path.join(process.cwd(), 'lead_remarks_store.json');
 
 // Canonical in-memory cache of lead_id -> immutable LeadRemark[]
 let remarksCache: Record<string, LeadRemark[]> = {};
+let isReconciliationRunning = false;
 
-function initStore() {
+const SYSTEM_PHRASES = [
+  'bulk importing logging workflow',
+  'lead creation lock',
+  'lead assigned on creation',
+  'automated import followup log trigger',
+  'scheduled during dashboard',
+  'completed automatically during status change',
+  'site visit completed automatically due to status change',
+  'site visit cancelled automatically due to status change',
+  'booking completed. amount:'
+];
+
+const SYSTEM_EVENT_NAMES = [
+  'status changed',
+  'follow-up scheduled',
+  'followup scheduled',
+  'follow-up completed',
+  'followup completed',
+  'site visit scheduled',
+  'site visit completed',
+  'site visit cancelled',
+  'remarks added',
+  'lead created',
+  'lead assigned'
+];
+
+/**
+ * Extract clean, authentic user remark text from raw status transition remarks or notes.
+ * Strips out system prefixes like "Outcome: ... | Remarks: " or "Remarks: ".
+ * Returns null if the remark only contains automated system event strings or is empty.
+ */
+export function extractCleanUserRemark(rawRemark: string | null | undefined): string | null {
+  if (!rawRemark) return null;
+  const raw = String(rawRemark).trim();
+  if (!raw) return null;
+
+  const lower = raw.toLowerCase();
+  if (SYSTEM_PHRASES.some(p => lower.includes(p))) {
+    return null;
+  }
+
+  // Handle "Outcome: ... | Remarks: <text>"
+  if (raw.includes(' | Remarks: ')) {
+    const text = raw.split(' | Remarks: ').slice(1).join(' | Remarks: ').trim();
+    if (!text) return null;
+    if (SYSTEM_PHRASES.some(p => text.toLowerCase().includes(p))) return null;
+    return text;
+  }
+
+  // Handle "Remarks: <text>"
+  if (/^Remarks:\s*/i.test(raw)) {
+    const text = raw.replace(/^Remarks:\s*/i, '').trim();
+    if (!text) return null;
+    if (SYSTEM_PHRASES.some(p => text.toLowerCase().includes(p))) return null;
+    return text;
+  }
+
+  // Handle pure outcome without custom remarks e.g. "Outcome: Warm Follow-up Callback"
+  if (/^Outcome:\s*[^|]*$/i.test(raw)) {
+    return null;
+  }
+
+  // Handle pure system event utterances
+  if (SYSTEM_EVENT_NAMES.includes(lower)) {
+    return null;
+  }
+
+  return raw;
+}
+
+function initLocalCache() {
   try {
     if (fs.existsSync(REMARKS_STORE_PATH)) {
       const data = fs.readFileSync(REMARKS_STORE_PATH, 'utf8');
       const parsed = JSON.parse(data);
-      
-      // Auto-migrate legacy format { [leadId]: string } to { [leadId]: LeadRemark[] }
-      const migrated: Record<string, LeadRemark[]> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        if (typeof value === 'string') {
-          if (value.trim()) {
-            migrated[key] = [{
-              id: crypto.randomUUID(),
-              lead_id: key,
-              remark_text: value.trim(),
-              created_at: new Date().toISOString(),
-              created_by_name: 'Initial Note',
-              source: 'legacy_import'
-            }];
-          } else {
-            migrated[key] = [];
-          }
-        } else if (Array.isArray(value)) {
-          migrated[key] = value as LeadRemark[];
-        }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        remarksCache = parsed;
+        console.log(`[Lead Remarks Store] Initialized local cache mirror with ${Object.keys(remarksCache).length} leads.`);
       }
-      remarksCache = migrated;
-      console.log(`[Lead Remarks Store] Initialized immutable remark history for ${Object.keys(remarksCache).length} leads.`);
-    } else {
-      fs.writeFileSync(REMARKS_STORE_PATH, JSON.stringify({}), 'utf8');
-      console.log('[Lead Remarks Store] Initialized empty persistent remarks store.');
     }
   } catch (error: any) {
-    console.error('[Lead Remarks Store] Error initializing store:', error.message);
+    console.warn('[Lead Remarks Store] Warning reading local cache file (will rebuild from Supabase):', error.message);
     remarksCache = {};
   }
 }
 
-function saveStore() {
+function saveLocalCache() {
   try {
     fs.writeFileSync(REMARKS_STORE_PATH, JSON.stringify(remarksCache, null, 2), 'utf8');
   } catch (error: any) {
-    console.error('[Lead Remarks Store] Error saving remarks store:', error.message);
+    // Non-fatal, as public.lead_remarks in Supabase is the primary durable store
+    console.warn('[Lead Remarks Store] Warning writing local cache mirror:', error.message);
   }
 }
 
-initStore();
+/**
+ * Canonical Reconciliation:
+ * 1. Paginates and loads all records from public.lead_remarks (primary source of truth).
+ * 2. Checks public.lead_status_updates for any historical remarks that were not yet backfilled.
+ * 3. Saves local mirror cache.
+ * 4. Strictly idempotent - never creates duplicates.
+ */
+export async function reconcileWithSupabase(): Promise<void> {
+  if (isReconciliationRunning) return;
+  isReconciliationRunning = true;
+
+  try {
+    const supabase = getSupabase();
+
+    // 1. Fetch user profiles for author name resolution
+    const { data: profiles } = await supabase.from('profiles').select('id, full_name');
+    const profileMap = new Map((profiles || []).map((p: any) => [p.id, p.full_name]));
+
+    const freshCache: Record<string, LeadRemark[]> = {};
+    const existingRemarkIds = new Set<string>();
+
+    // 2. Load all authoritative records directly from public.lead_remarks using pagination
+    let fromRemarks = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data: dbRemarks, error: remarksErr } = await supabase
+        .from('lead_remarks')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(fromRemarks, fromRemarks + batchSize - 1);
+
+      if (remarksErr) {
+        console.error('[Lead Remarks Store] Error reading public.lead_remarks from Supabase:', remarksErr.message);
+        break;
+      }
+      if (!dbRemarks || dbRemarks.length === 0) break;
+
+      for (const r of dbRemarks) {
+        existingRemarkIds.add(r.id);
+        if (!freshCache[r.lead_id]) {
+          freshCache[r.lead_id] = [];
+        }
+        freshCache[r.lead_id].push({
+          id: r.id,
+          lead_id: r.lead_id,
+          remark_text: r.remark_text,
+          created_at: r.created_at,
+          created_by: r.created_by,
+          created_by_name: r.created_by_name || profileMap.get(r.created_by) || 'Agent',
+          source: r.source || 'direct_entry',
+          status_at_creation: r.status_at_creation,
+          outcome_at_creation: r.outcome_at_creation
+        });
+      }
+
+      if (dbRemarks.length < batchSize) break;
+      fromRemarks += batchSize;
+    }
+
+    // 3. Historical backfill check: inspect lead_status_updates for any remarks missing from public.lead_remarks
+    try {
+      let fromStatus = 0;
+      const statusBatchSize = 1000;
+      const backfillRows: any[] = [];
+
+      while (true) {
+        const { data: statusUpdates, error: statusErr } = await supabase
+          .from('lead_status_updates')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(fromStatus, fromStatus + statusBatchSize - 1);
+
+        if (statusErr || !statusUpdates || statusUpdates.length === 0) break;
+
+        for (const u of statusUpdates) {
+          if (!existingRemarkIds.has(u.id)) {
+            const cleanText = extractCleanUserRemark(u.remark);
+            if (cleanText) {
+              const authorName = profileMap.get(u.user_id) || 'Agent';
+              const newRecord = {
+                id: u.id,
+                lead_id: u.lead_id,
+                remark_text: cleanText,
+                created_at: u.created_at,
+                created_by: u.user_id,
+                created_by_name: authorName,
+                source: 'status_transition',
+                status_at_creation: u.new_status,
+                outcome_at_creation: u.outcome || null
+              };
+              backfillRows.push(newRecord);
+              existingRemarkIds.add(u.id);
+
+              if (!freshCache[u.lead_id]) freshCache[u.lead_id] = [];
+              freshCache[u.lead_id].push(newRecord);
+            }
+          }
+        }
+
+        if (statusUpdates.length < statusBatchSize) break;
+        fromStatus += statusBatchSize;
+      }
+
+      if (backfillRows.length > 0) {
+        console.log(`[Lead Remarks Store] Backfilling ${backfillRows.length} historical remarks into public.lead_remarks...`);
+        // Insert backfill rows in batches
+        for (let i = 0; i < backfillRows.length; i += 100) {
+          const slice = backfillRows.slice(i, i + 100);
+          await supabase.from('lead_remarks').insert(slice);
+        }
+      }
+    } catch (backfillErr: any) {
+      console.warn('[Lead Remarks Store] Historical backfill check notice:', backfillErr.message);
+    }
+
+    // 4. Sort all cached lead remark arrays newest-first
+    for (const leadId of Object.keys(freshCache)) {
+      freshCache[leadId].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    }
+
+    remarksCache = freshCache;
+    saveLocalCache();
+    console.log(`[Lead Remarks Store] Synchronized with public.lead_remarks: ${existingRemarkIds.size} total remarks across ${Object.keys(remarksCache).length} leads.`);
+  } catch (err: any) {
+    console.error('[Lead Remarks Store] Error during Supabase remarks reconciliation:', err.message);
+  } finally {
+    isReconciliationRunning = false;
+  }
+}
+
+// Initial sync on module load
+initLocalCache();
+reconcileWithSupabase().catch((e) => console.error('[Lead Remarks Store] Boot reconciliation error:', e));
 
 /**
  * Append a new immutable remark to a lead's history.
- * Every remark entered by a user remains permanently associated with that lead.
- * No lifecycle action may overwrite or delete a previous remark.
+ * Inserts directly into public.lead_remarks in Supabase (the canonical database source of truth).
+ * Does NOT require or depend on lead_status_updates.
+ * Strictly append-only: never overwrites or mutates any prior remark.
  */
 export async function addLeadRemark(
   leadId: string,
@@ -83,47 +268,87 @@ export async function addLeadRemark(
   const text = (remarkData.remark_text || '').trim();
   if (!text) throw new Error('Remark text cannot be empty.');
 
-  const remark: LeadRemark = {
-    id: crypto.randomUUID(),
+  const remarkId = crypto.randomUUID();
+  const createdAt = remarkData.created_at || new Date().toISOString();
+  const authorName = remarkData.created_by_name || 'Agent';
+
+  const newRemark: LeadRemark = {
+    id: remarkId,
     lead_id: leadId,
     remark_text: text,
-    created_at: remarkData.created_at || new Date().toISOString(),
-    created_by: remarkData.created_by,
-    created_by_name: remarkData.created_by_name,
-    source: remarkData.source || 'status_transition',
-    status_at_creation: remarkData.status_at_creation,
-    outcome_at_creation: remarkData.outcome_at_creation
+    created_at: createdAt,
+    created_by: remarkData.created_by || null,
+    created_by_name: authorName,
+    source: remarkData.source || 'direct_entry',
+    status_at_creation: remarkData.status_at_creation || null,
+    outcome_at_creation: remarkData.outcome_at_creation || null
   };
 
+  // 1. Authoritative write: insert directly into public.lead_remarks in Supabase
+  const supabase = getSupabase();
+  const { data: dbData, error: insertError } = await supabase
+    .from('lead_remarks')
+    .insert([newRemark])
+    .select()
+    .single();
+
+  if (insertError) {
+    console.error(`[Lead Remarks Store] Failed to insert into public.lead_remarks for lead ${leadId}:`, insertError.message);
+    throw new Error(`Failed to persist remark to Supabase: ${insertError.message}`);
+  }
+
+  const persistedRemark: LeadRemark = dbData || newRemark;
+
+  // 2. Update memory cache mirror (prepend and maintain newest-first)
   if (!remarksCache[leadId]) {
     remarksCache[leadId] = [];
   }
+  remarksCache[leadId].unshift(persistedRemark);
+  remarksCache[leadId].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  saveLocalCache();
 
-  // Append new record (maintaining immutable history)
-  remarksCache[leadId].push(remark);
-  saveStore();
+  console.log(`[Lead Remarks Store] Successfully persisted remark into public.lead_remarks for lead ${leadId} by ${persistedRemark.created_by_name}: "${text.substring(0, 30)}..."`);
 
-  console.log(`[Lead Remarks Store] Appended immutable remark for lead ${leadId} by ${remark.created_by_name || 'Agent'}: "${text.substring(0, 30)}..."`);
-
-  // Attempt async write to Supabase table if it exists
-  try {
-    const supabase = getSupabase();
-    await supabase.from('lead_remarks').insert([remark]);
-  } catch (err: any) {
-    // Expected if schema migration is pending
-  }
-
-  return remark;
+  return persistedRemark;
 }
 
 /**
- * Get all immutable remarks for a lead, sorted newest first.
+ * Get all immutable remarks for a lead synchronously from in-memory cache, sorted newest-first.
  */
 export function getLeadRemarks(leadId: string): LeadRemark[] {
   if (!leadId || !remarksCache[leadId]) return [];
   return [...remarksCache[leadId]].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
+}
+
+/**
+ * Asynchronously get all immutable remarks for a lead directly from public.lead_remarks in Supabase.
+ * Ensures the database is the primary source of truth, even after server restarts or local cache deletion.
+ */
+export async function getLeadRemarksAsync(leadId: string): Promise<LeadRemark[]> {
+  if (!leadId) return [];
+
+  try {
+    const supabase = getSupabase();
+    const { data: dbRemarks, error } = await supabase
+      .from('lead_remarks')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false });
+
+    if (!error && dbRemarks) {
+      remarksCache[leadId] = dbRemarks;
+      saveLocalCache();
+      return dbRemarks;
+    }
+  } catch (err: any) {
+    console.warn(`[Lead Remarks Store] Query to public.lead_remarks failed for lead ${leadId}, falling back to cache:`, err.message);
+  }
+
+  return getLeadRemarks(leadId);
 }
 
 /**
@@ -152,7 +377,7 @@ export function deleteLeadRemarks(leadId: string): void {
   if (!leadId) return;
   if (remarksCache[leadId] !== undefined) {
     delete remarksCache[leadId];
-    saveStore();
+    saveLocalCache();
   }
   try {
     const supabase = getSupabase();
