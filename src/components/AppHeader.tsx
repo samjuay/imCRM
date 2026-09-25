@@ -18,6 +18,7 @@ export default function AppHeader() {
     setActiveLeadId,
     activeProjectId,
     setActiveProjectId,
+    activeDrawerCard,
     stats,
     darkMode,
     toggleDarkMode,
@@ -106,6 +107,13 @@ export default function AppHeader() {
   const handleBack = () => {
     if (activeLeadId) {
       setActiveLeadId(null);
+      const params = new URLSearchParams(window.location.search);
+      params.delete('lead_id');
+      const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+      window.history.replaceState({}, '', newUrl);
+      if (activeDrawerCard) {
+        setActiveTab('dashboard');
+      }
     } else if (activeProjectId) {
       setActiveProjectId(null);
     }
@@ -121,6 +129,7 @@ export default function AppHeader() {
       case 'cold-calling': return 'Cold Calling Pipeline';
       case 'projects': return 'Projects';
       case 'reports': return 'Performance Reports';
+      case 'integrations': return 'Lead Integrations';
       default: return 'ImCRM';
     }
   };

@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { 
-  User, Lead, ColdData, Project, ProjectConfiguration, DashboardStats, UserRole, LeadSource, Activity 
+  User, Lead, LeadStatus, ColdData, ColdStatus, Project, ProjectConfiguration, DashboardStats, UserRole, LeadSource, Activity, LeadRemark 
 } from '../types';
 
 interface AppState {
@@ -15,7 +15,7 @@ interface AppState {
   isLoadingUsers: boolean;
   
   // Navigation & UI Tabs
-  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources' | 'activity-history' | 'ai-coach';
+  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources' | 'activity-history' | 'ai-coach' | 'integrations';
   activeLeadId: string | null;
   activeProjectId: string | null;
   activeDrawerCard: string | null;
@@ -34,6 +34,7 @@ interface AppState {
     followups: any[];
     siteVisits: any[];
     timeline: any[];
+    remarks: LeadRemark[];
   } | null;
 
   coldRecords: ColdData[];
@@ -74,28 +75,35 @@ interface AppState {
 
   // Data Actions
   fetchStats: () => Promise<void>;
-  fetchLeads: (filters?: { 
-    search?: string; 
-    status?: string; 
-    source?: string; 
-    project?: string; 
-    assignedTo?: string; 
-    budget_min?: string; 
-    budget_max?: string; 
-    start_date?: string; 
-    end_date?: string; 
-    page?: number 
-  }) => Promise<void>;
+  leadsFilters: { 
+    search: string; 
+    status: string; 
+    source: string; 
+    project: string; 
+    assignedTo: string; 
+    budget_min: string; 
+    budget_max: string; 
+    start_date: string; 
+    end_date: string; 
+    page: number; 
+  };
+  setLeadsFilters: (filters: Partial<AppState['leadsFilters']>) => void;
+  resetLeadsFilters: () => void;
+  fetchLeads: (filters?: Partial<AppState['leadsFilters']>) => Promise<void>;
   fetchLeadDetails: (id: string) => Promise<void>;
   createLead: (leadData: any) => Promise<{ success: boolean; lead?: Lead; error?: string }>;
   updateLeadBasic: (id: string, updateData: any) => Promise<boolean>;
+  addLeadRemark: (id: string, remarkText: string) => Promise<{ success: boolean; remark?: LeadRemark; remarks?: LeadRemark[]; error?: string }>;
+  updateLeadRemarks: (id: string, remarks: string) => Promise<{ success: boolean; remarks?: string; error?: string }>;
   updateLeadStatus: (
     id: string, 
     newStatus: string, 
     notes: string, 
     bookingAmount?: number,
     followup?: { scheduled_at: string; type: string; notes: string },
-    site_visit?: { project_id: string; scheduled_date: string; scheduled_time: string; visitors_count: number; transport_arranged: boolean }
+    site_visit?: { project_id: string; scheduled_date: string; scheduled_time: string; visitors_count: number; transport_arranged: boolean },
+    remarkText?: string,
+    outcome?: string
   ) => Promise<boolean>;
   deleteLead: (id: string) => Promise<boolean>;
   deleteProject: (id: string) => Promise<boolean>;
@@ -108,6 +116,19 @@ interface AppState {
   
   bulkReassignLeads: (leadIds: string[], targetUserId: string) => Promise<boolean>;
   bulkUpdateLeadsStatus: (leadIds: string[], targetStatus: string) => Promise<boolean>;
+  bulkDeleteLeads: (leadIds: string[]) => Promise<boolean>;
+  bulkTransferLeadsToCold: (leadIds: string[], targetUserId: string) => Promise<boolean>;
+  fetchAllFilteredLeadIds: (filters?: {
+    search?: string;
+    status?: string;
+    source?: string;
+    project?: string;
+    assignedTo?: string;
+    budget_min?: string;
+    budget_max?: string;
+    start_date?: string;
+    end_date?: string;
+  }) => Promise<string[]>;
   bulkImportLeads: (leads: any[]) => Promise<{ success: boolean; importedCount: number; duplicateCount: number; error?: string }>;
 
   // Lead Sources Actions
@@ -116,7 +137,15 @@ interface AppState {
   updateLeadSource: (id: string, name: string, is_active: boolean) => Promise<{ success: boolean; error?: string }>;
 
   // Cold Data Actions
-  fetchColdData: (filters?: { search?: string; status?: string; sourceId?: string; assignedTo?: string }) => Promise<void>;
+  coldFilters: {
+    search: string;
+    status: string;
+    sourceId: string;
+    assignedTo: string;
+  };
+  setColdFilters: (filters: Partial<AppState['coldFilters']>) => void;
+  resetColdFilters: () => void;
+  fetchColdData: (filters?: Partial<AppState['coldFilters']>) => Promise<void>;
   updateColdStatus: (id: string, status: string, notes?: string) => Promise<boolean>;
   bulkUploadCold: (records: any[], assignedToUserId?: string) => Promise<{ success: boolean; addedCount: number; duplicateCount: number; results?: any[] }>;
   bulkAssignCold: (recordIds: string[], targetUserId: string) => Promise<boolean>;
@@ -158,9 +187,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   leadsPage: 1,
   leadsTotalCount: 0,
   leadsTotalPages: 1,
+  leadsFilters: {
+    page: 1,
+    search: '',
+    status: '',
+    source: '',
+    project: '',
+    assignedTo: '',
+    budget_min: '',
+    budget_max: '',
+    start_date: '',
+    end_date: ''
+  },
   
   activeLeadDetails: null,
   coldRecords: [],
+  coldFilters: {
+    search: '',
+    status: '',
+    sourceId: '',
+    assignedTo: ''
+  },
   projects: [],
   activeProjectDetails: null,
   leadSources: [],
@@ -320,13 +367,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeDrawerCard: (tab === 'dashboard' || isViewingLeadDetailFromDashboard) ? get().activeDrawerCard : null
     });
     if (tab === 'dashboard') get().fetchStats();
-    if (tab === 'leads') get().fetchLeads({ page: 1 });
+    if (tab === 'leads') get().fetchLeads();
     if (tab === 'cold-calling') get().fetchColdData();
     if (tab === 'projects') get().fetchProjects();
     if (tab === 'reports') get().fetchReports();
   },
 
-  setActiveLeadId: (leadId) => set({ activeLeadId: leadId, activeLeadDetails: null }),
+  setActiveLeadId: (leadId) => {
+    set({ activeLeadId: leadId, activeLeadDetails: null });
+    if (leadId) {
+      get().fetchLeadDetails(leadId);
+    }
+  },
   setActiveProjectId: (projectId) => set({ activeProjectId: projectId }),
   setActiveDrawerCard: (cardId) => set({ activeDrawerCard: cardId }),
 
@@ -375,24 +427,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  setLeadsFilters: (filters) => {
+    const updated = { ...get().leadsFilters, ...filters };
+    set({ leadsFilters: updated });
+  },
+
+  resetLeadsFilters: () => {
+    const reset = {
+      page: 1,
+      search: '',
+      status: '',
+      source: '',
+      project: '',
+      assignedTo: '',
+      budget_min: '',
+      budget_max: '',
+      start_date: '',
+      end_date: ''
+    };
+    set({ leadsFilters: reset, leadsPage: 1 });
+    get().fetchLeads(reset);
+  },
+
   // Fetch Leads search/filters/pagination (Page 11)
   fetchLeads: async (filters = {}) => {
     const user = get().activeUser;
     if (!user) return;
     set({ isLoading: true, error: null });
     
-    const page = filters.page || get().leadsPage;
+    // Merge provided filters with persistent store filters
+    const currentFilters = get().leadsFilters;
+    const activeFilters = {
+      ...currentFilters,
+      ...filters
+    };
+    const page = filters.page !== undefined ? filters.page : (activeFilters.page || get().leadsPage || 1);
+    activeFilters.page = page;
+    set({ leadsFilters: activeFilters, leadsPage: page });
+
     let url = `/api/leads?userId=${user.id}&role=${user.role}&companyId=${user.company_id}&page=${page}`;
     
-    if (filters.search) url += `&search=${encodeURIComponent(filters.search)}`;
-    if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
-    if (filters.source) url += `&source=${encodeURIComponent(filters.source)}`;
-    if (filters.project) url += `&project=${encodeURIComponent(filters.project)}`;
-    if (filters.assignedTo) url += `&assignedTo=${encodeURIComponent(filters.assignedTo)}`;
-    if (filters.budget_min) url += `&budget_min=${encodeURIComponent(filters.budget_min)}`;
-    if (filters.budget_max) url += `&budget_max=${encodeURIComponent(filters.budget_max)}`;
-    if (filters.start_date) url += `&start_date=${encodeURIComponent(filters.start_date)}`;
-    if (filters.end_date) url += `&end_date=${encodeURIComponent(filters.end_date)}`;
+    if (activeFilters.search) url += `&search=${encodeURIComponent(activeFilters.search)}`;
+    if (activeFilters.status) url += `&status=${encodeURIComponent(activeFilters.status)}`;
+    if (activeFilters.source) url += `&source=${encodeURIComponent(activeFilters.source)}`;
+    if (activeFilters.project) url += `&project=${encodeURIComponent(activeFilters.project)}`;
+    if (activeFilters.assignedTo) url += `&assignedTo=${encodeURIComponent(activeFilters.assignedTo)}`;
+    if (activeFilters.budget_min) url += `&budget_min=${encodeURIComponent(activeFilters.budget_min)}`;
+    if (activeFilters.budget_max) url += `&budget_max=${encodeURIComponent(activeFilters.budget_max)}`;
+    if (activeFilters.start_date) url += `&start_date=${encodeURIComponent(activeFilters.start_date)}`;
+    if (activeFilters.end_date) url += `&end_date=${encodeURIComponent(activeFilters.end_date)}`;
 
     try {
       const res = await fetch(url);
@@ -419,14 +502,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch(`/api/leads/${id}`);
       if (res.ok) {
         const data = await res.json();
-        set({ activeLeadDetails: data });
+        // Guard against race conditions when user opens different leads from cards
+        if (get().activeLeadId === id) {
+          set({
+            activeLeadDetails: {
+              ...data,
+              remarks: Array.isArray(data.remarks) ? data.remarks : []
+            }
+          });
+        }
       } else {
-        throw new Error('Lead details can not be retrieved');
+        if (get().activeLeadId === id) {
+          throw new Error('Lead details can not be retrieved');
+        }
       }
     } catch (e: any) {
-      set({ error: e.message || "Failed to fetch lead profile" });
+      if (get().activeLeadId === id) {
+        set({ error: e.message || "Failed to fetch lead profile" });
+      }
     } finally {
-      set({ isLoading: false });
+      if (get().activeLeadId === id) {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -469,7 +566,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify(updateData)
       });
       if (res.ok) {
-        get().fetchLeadDetails(id);
+        if (get().activeLeadId === id) {
+          get().fetchLeadDetails(id);
+        }
         get().fetchLeads();
         return true;
       }
@@ -481,26 +580,92 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  addLeadRemark: async (id: string, remarkText: string) => {
+    const user = get().activeUser;
+    if (!user) return { success: false, error: 'User is not authenticated.' };
+    const text = (remarkText || '').trim();
+    if (!text) return { success: false, error: 'Remark text cannot be empty.' };
+
+    try {
+      const res = await fetch(`/api/leads/${id}/remarks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          remark_text: text,
+          created_by: user.id,
+          created_by_name: user.full_name,
+          source: 'direct_entry'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Update activeLeadDetails in local state immediately
+        const currentDetails = get().activeLeadDetails;
+        if (currentDetails && currentDetails.lead.id === id) {
+          const updatedRemarks = data.remarks || [data.remark, ...(currentDetails.remarks || [])];
+          set({
+            activeLeadDetails: {
+              ...currentDetails,
+              remarks: updatedRemarks,
+              lead: {
+                ...currentDetails.lead,
+                remarks: text
+              }
+            }
+          });
+        }
+        // Also update in leads list if present
+        const leads = get().leads.map(l => l.id === id ? { ...l, remarks: text } : l);
+        set({ leads });
+        return { success: true, remark: data.remark, remarks: data.remarks };
+      }
+      return { success: false, error: data.error || 'Failed to persist remark.' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Network exception saving remark.' };
+    }
+  },
+
+  updateLeadRemarks: async (id: string, remarks: string) => {
+    const res = await get().addLeadRemark(id, remarks);
+    return { success: res.success, remarks: res.remark?.remark_text, error: res.error };
+  },
+
   // Status logs with notes (Page 11 timeline audit)
-  updateLeadStatus: async (id, newStatus, notes, bookingAmount, followup, site_visit) => {
+  updateLeadStatus: async (id, newStatus, notes, bookingAmount, followup, site_visit, remarkText, outcome) => {
     const user = get().activeUser;
     if (!user) return false;
     set({ isLoading: true, error: null });
     try {
+      const cleanRemark = (remarkText !== undefined && remarkText !== null) ? remarkText.trim() : notes.trim();
       const res = await fetch(`/api/leads/${id}/status-update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           new_status: newStatus,
           notes,
+          remark: notes,
+          remark_text: cleanRemark,
+          outcome: outcome || '',
           user_id: user.id,
+          user_name: user.full_name,
           booking_amount: bookingAmount,
           followup,
           site_visit
         })
       });
       if (res.ok) {
-        get().fetchLeadDetails(id);
+        // Immediately re-evaluate canonical leads against current active filters
+        const activeStatusFilter = get().leadsFilters.status;
+        const currentLeads = get().leads;
+        let updatedLeads = currentLeads.map(l => l.id === id ? { ...l, status: newStatus as LeadStatus } : l);
+        if (activeStatusFilter && activeStatusFilter !== newStatus) {
+          updatedLeads = updatedLeads.filter(l => l.id !== id);
+        }
+        set({ leads: updatedLeads });
+
+        if (get().activeLeadId === id) {
+          await get().fetchLeadDetails(id);
+        }
         get().fetchStats();
         get().fetchLeads();
         get().fetchReports();
@@ -652,6 +817,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ leadIds, targetStatus, user_id: user.id })
       });
       if (res.ok) {
+        const activeStatus = get().leadsFilters.status;
+        let updatedLeads = get().leads.map(l => leadIds.includes(l.id) ? { ...l, status: targetStatus as LeadStatus } : l);
+        if (activeStatus && activeStatus !== targetStatus) {
+          updatedLeads = updatedLeads.filter(l => !leadIds.includes(l.id));
+        }
+        set({ leads: updatedLeads });
         get().fetchLeads();
         get().fetchStats();
         get().fetchReports();
@@ -662,6 +833,82 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false;
     } finally {
       set({ isLoading: false });
+    }
+  },
+
+  bulkDeleteLeads: async (leadIds) => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await fetch('/api/leads/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds })
+      });
+      if (res.ok) {
+        set({ leads: get().leads.filter(l => !leadIds.includes(l.id)) });
+        get().fetchLeads();
+        get().fetchStats();
+        get().fetchReports();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  bulkTransferLeadsToCold: async (leadIds, targetUserId) => {
+    const user = get().activeUser;
+    if (!user) return false;
+    set({ isLoading: true, error: null });
+    try {
+      const res = await fetch('/api/leads/bulk-transfer-cold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds, targetUserId, managerId: user.id })
+      });
+      if (res.ok) {
+        set({ leads: get().leads.filter(l => !leadIds.includes(l.id)) });
+        get().fetchLeads();
+        get().fetchColdData();
+        get().fetchStats();
+        get().fetchReports();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  fetchAllFilteredLeadIds: async (filters = {}) => {
+    const user = get().activeUser;
+    if (!user) return [];
+    try {
+      let url = `/api/leads/all-ids?userId=${user.id}&role=${user.role}&companyId=${user.company_id}`;
+      if (filters.search) url += `&search=${encodeURIComponent(filters.search)}`;
+      if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
+      if (filters.source) url += `&source=${encodeURIComponent(filters.source)}`;
+      if (filters.project) url += `&project=${encodeURIComponent(filters.project)}`;
+      if (filters.assignedTo) url += `&assignedTo=${encodeURIComponent(filters.assignedTo)}`;
+      if (filters.budget_min) url += `&budget_min=${encodeURIComponent(filters.budget_min)}`;
+      if (filters.budget_max) url += `&budget_max=${encodeURIComponent(filters.budget_max)}`;
+      if (filters.start_date) url += `&start_date=${encodeURIComponent(filters.start_date)}`;
+      if (filters.end_date) url += `&end_date=${encodeURIComponent(filters.end_date)}`;
+
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return data.ids || [];
+      }
+      return [];
+    } catch (e) {
+      console.error(e);
+      return [];
     }
   },
 
@@ -693,17 +940,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
 
+  setColdFilters: (filters) => {
+    const updated = { ...get().coldFilters, ...filters };
+    set({ coldFilters: updated });
+  },
+
+  resetColdFilters: () => {
+    const reset = {
+      search: '',
+      status: '',
+      sourceId: '',
+      assignedTo: ''
+    };
+    set({ coldFilters: reset });
+    get().fetchColdData(reset);
+  },
+
   // Cold calling dataset actions (Page 13)
   fetchColdData: async (filters = {}) => {
     const user = get().activeUser;
     if (!user) return;
     set({ isLoading: true, error: null });
     
+    const currentFilters = get().coldFilters;
+    const activeFilters = {
+      ...currentFilters,
+      ...filters
+    };
+    set({ coldFilters: activeFilters });
+
     let url = `/api/cold-data?userId=${user.id}&role=${user.role}&companyId=${user.company_id}`;
-    if (filters.search) url += `&search=${encodeURIComponent(filters.search)}`;
-    if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
-    if (filters.sourceId) url += `&sourceId=${encodeURIComponent(filters.sourceId)}`;
-    if (filters.assignedTo) url += `&assignedTo=${encodeURIComponent(filters.assignedTo)}`;
+    if (activeFilters.search) url += `&search=${encodeURIComponent(activeFilters.search)}`;
+    if (activeFilters.status) url += `&status=${encodeURIComponent(activeFilters.status)}`;
+    if (activeFilters.sourceId) url += `&sourceId=${encodeURIComponent(activeFilters.sourceId)}`;
+    if (activeFilters.assignedTo) url += `&assignedTo=${encodeURIComponent(activeFilters.assignedTo)}`;
 
     try {
       const res = await fetch(url);
@@ -729,6 +999,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ status, notes })
       });
       if (res.ok) {
+        // Immediately re-evaluate current canonical cold records against active filters
+        const activeStatusFilter = get().coldFilters.status;
+        const currentCold = get().coldRecords;
+        let updatedCold = currentCold.map(r => r.id === id ? { ...r, status: status as ColdStatus, notes: notes || r.notes } : r);
+        if (activeStatusFilter && activeStatusFilter !== status) {
+          updatedCold = updatedCold.filter(r => r.id !== id);
+        }
+        set({ coldRecords: updatedCold });
         get().fetchColdData();
         return true;
       }
@@ -787,6 +1065,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         })
       });
       if (res.ok) {
+        const activeAssigned = get().coldFilters.assignedTo;
+        let updatedCold = get().coldRecords.map(r => recordIds.includes(r.id) ? { ...r, assigned_to: targetUserId } : r);
+        if (activeAssigned && activeAssigned !== targetUserId) {
+          updatedCold = updatedCold.filter(r => !recordIds.includes(r.id));
+        }
+        set({ coldRecords: updatedCold });
         get().fetchColdData();
         return true;
       }
@@ -812,13 +1096,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         })
       });
       if (res.ok) {
+        set({ coldRecords: get().coldRecords.filter(r => !recordIds.includes(r.id)) });
         get().fetchColdData();
         get().fetchStats();
         return true;
       }
+      const data = await res.json().catch(() => ({}));
+      const errMsg = data.error || 'Failed to delete selected cold contacts.';
+      console.error('Bulk delete cold error:', errMsg);
+      set({ error: errMsg });
       return false;
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      set({ error: e.message || 'Network error occurred while deleting.' });
       return false;
     } finally {
       set({ isLoading: false });
@@ -841,6 +1131,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
+        set({ coldRecords: get().coldRecords.filter(r => r.id !== id) });
         get().fetchColdData();
         get().fetchLeads();
         get().fetchStats();

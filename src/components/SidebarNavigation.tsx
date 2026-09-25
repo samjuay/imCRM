@@ -5,12 +5,12 @@
 
 import React from 'react';
 import { useAppStore } from '../lib/store';
-import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus, History, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus, History, Sparkles, Share2 } from 'lucide-react';
 import { UserRole, getInitials } from '../types';
 import ImCrmLogo from './ImCrmLogo';
 
 export default function SidebarNavigation() {
-  const { activeTab, setActiveTab, activeUser, logout, activeLeadId, activeProjectId } = useAppStore();
+  const { activeTab, setActiveTab, activeUser, logout, activeLeadId, setActiveLeadId, activeProjectId } = useAppStore();
 
   const navItems = [
     { id: 'dashboard', label: 'Home Dashboard', icon: LayoutDashboard, desc: 'Performance stats & action' },
@@ -21,6 +21,9 @@ export default function SidebarNavigation() {
     { id: 'reports', label: 'Performance Reports', icon: BarChart3, desc: 'Team & company audits' },
     { id: 'cold-calling', label: 'Cold Calling', icon: PhoneCall, desc: 'Unassigned call pools' },
     { id: 'lead-sources', label: 'Lead Sources', icon: ListPlus, desc: 'Campaign acquisition channels' },
+    ...(activeUser?.role === UserRole.COMPANY_ADMIN ? [
+      { id: 'integrations', label: 'Integrations', icon: Share2, desc: 'Meta & 99acres lead pipelines' }
+    ] : []),
   ];
 
   const currentRoleLabel = (role: string) => {
@@ -51,7 +54,16 @@ export default function SidebarNavigation() {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
+              onClick={() => {
+                if (activeLeadId) {
+                  setActiveLeadId(null);
+                  const params = new URLSearchParams(window.location.search);
+                  params.delete('lead_id');
+                  const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+                  window.history.replaceState({}, '', newUrl);
+                }
+                setActiveTab(item.id as any);
+              }}
               className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-2xl transition-all text-left group cursor-pointer ${
                 isActive 
                   ? 'bg-premium-gold text-white font-bold shadow-md' 

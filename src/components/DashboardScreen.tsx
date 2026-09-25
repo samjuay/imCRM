@@ -165,6 +165,15 @@ export default function DashboardScreen() {
     }
   ];
 
+  const handleOpenLeadDetails = (leadId: string) => {
+    if (!leadId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('lead_id', leadId);
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+    setActiveLeadId(leadId);
+    setActiveTab('leads');
+  };
+
   const handleCardClick = async (cardId: string) => {
     setActiveDrawerCard(cardId);
     setIsLoadingDrawer(true);
@@ -661,7 +670,7 @@ export default function DashboardScreen() {
                   const phoneNum = item.phone || item.leadPhone || '';
                   const relativeTitle = item.full_name || item.leadName || 'Anonymous';
                   const isFollowup = !!item.scheduled_at;
-                  const targetLeadId = item.lead_id || item.id;
+                  const targetLeadId = item.lead_id || item.leadId || item.id;
                   
                   return (
                     <div 
@@ -674,8 +683,7 @@ export default function DashboardScreen() {
                           <h4 
                             onClick={() => {
                               if (targetLeadId) {
-                                setActiveLeadId(targetLeadId);
-                                setActiveTab('leads');
+                                handleOpenLeadDetails(targetLeadId);
                               }
                             }}
                             className="text-xs font-bold text-primary-navy tracking-tight hover:text-premium-gold hover:underline cursor-pointer transition-colors flex items-center space-x-1"
@@ -959,8 +967,7 @@ export default function DashboardScreen() {
                         <button
                           onClick={() => {
                             if (targetLeadId) {
-                              setActiveLeadId(targetLeadId);
-                              setActiveTab('leads');
+                              handleOpenLeadDetails(targetLeadId);
                             }
                           }}
                           className="neu-button px-3.5 py-1.5 text-[10px] uppercase text-premium-gold border-premium-gold/30 font-semibold focus:outline-none flex items-center space-x-1 cursor-pointer"

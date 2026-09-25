@@ -10,6 +10,8 @@ import { createClient } from '@supabase/supabase-js';
 import { getSupabase, getSupabaseAdmin, getServerUserSupabase } from './src/db/supabaseClient';
 import { UserRole, LeadStatus, ColdStatus, SiteVisitStatus, Lead, ColdData } from './src/types';
 import { trackActivity, getActivities } from './src/db/activitiesStore';
+import { getLeadRemarks, addLeadRemark, getBatchLeadRemarks, getLatestLeadRemarkText, deleteLeadRemarks } from './src/db/leadRemarksStore';
+import { LeadRemark } from './src/types';
 import { kpiEngine } from './src/lib/kpiEngine';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -287,6 +289,51 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   const PORT = 3000;
+
+  // In-memory Integration Configuration & Ingestion Audit Store
+  const integrationConfig: {
+    meta: {
+      enabled: boolean;
+      verifyToken: string;
+      appSecret: string;
+      pageId: string;
+      lastReceivedAt?: string;
+      leadsIngestedCount: number;
+    };
+    ninetyNineAcres: {
+      enabled: boolean;
+      apiKey: string;
+      queryUrl?: string;
+      lastReceivedAt?: string;
+      leadsIngestedCount: number;
+    };
+  } = {
+    meta: {
+      enabled: true,
+      verifyToken: 'partneros_meta_token_secure_99',
+      appSecret: 'meta_secret_live_partneros',
+      pageId: '108482019482711',
+      leadsIngestedCount: 0
+    },
+    ninetyNineAcres: {
+      enabled: true,
+      apiKey: 'nnacres_api_key_partneros_live',
+      queryUrl: 'https://api.99acres.com/leads/v1/inbound',
+      leadsIngestedCount: 0
+    }
+  };
+
+  const integrationLogs: Array<{
+    id: string;
+    source: 'Meta' | '99acres';
+    lead_name: string;
+    phone: string;
+    email?: string;
+    project_name?: string;
+    status: 'Ingested' | 'Duplicate' | 'Error';
+    created_at: string;
+    raw_payload?: any;
+  }> = [];
 
   // Run resilient onboarding database seeding
   await bootstrapDatabase();
@@ -1053,7 +1100,11 @@ async function startServer() {
       }
       if (status) query = query.eq('status', status);
       if (source) query = query.eq('source_id', source);
-      if (assignedTo) query = query.eq('assigned_to', assignedTo);
+      if (assignedTo === 'unassigned') {
+        query = query.is('assigned_to', null);
+      } else if (assignedTo) {
+        query = query.eq('assigned_to', assignedTo);
+      }
       if (start_date) query = query.gte('created_at', start_date);
       if (end_date) {
         const eod = new Date(end_date); eod.setHours(23, 59, 59, 999);
@@ -1087,9 +1138,11 @@ async function startServer() {
 
       list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       
-      // Map true source name strings onto every lead item
+      // Map true source name strings and persistent remarks onto every lead item
+      const batchRemarks = getBatchLeadRemarks(list.map(l => l.id));
       const completedList = list.map(l => ({
         ...l,
+        remarks: l.remarks !== undefined && l.remarks !== null ? l.remarks : (batchRemarks[l.id]?.[0]?.remark_text || ''),
         sourceName: sourcesMap.get(l.source_id) || 'Other',
         source_name: sourcesMap.get(l.source_id) || 'Other'
       }));
@@ -1101,6 +1154,74 @@ async function startServer() {
         leads: paginatedLeads,
         pagination: { page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) }
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/leads/all-ids', async (req, res) => {
+    const userId = req.query.userId as string;
+    const role = req.query.role as string;
+    const companyId = req.query.companyId as string || '99999999-9999-9999-9999-999999999999';
+
+    if (!userId || !role) {
+      return res.status(400).json({ error: 'userId and role are required' });
+    }
+
+    const search = (req.query.search as string || '').toLowerCase();
+    const status = req.query.status as string;
+    const source = req.query.source as string;
+    const projectInterest = req.query.project as string;
+    const assignedTo = req.query.assignedTo as string;
+    const budget_min = req.query.budget_min ? parseFloat(req.query.budget_min as string) : null;
+    const budget_max = req.query.budget_max ? parseFloat(req.query.budget_max as string) : null;
+    const start_date = req.query.start_date as string;
+    const end_date = req.query.end_date as string;
+
+    try {
+      const supabase = getSupabase();
+      const scopedUserIds = await getScopedUserIds(userId, role, companyId);
+
+      let query = supabase.from('leads').select('id, full_name, phone, email, project_interests, budget_min, budget_max, created_at').eq('company_id', companyId);
+      if (scopedUserIds) {
+        query = query.in('assigned_to', scopedUserIds);
+      }
+      if (status) query = query.eq('status', status);
+      if (source) query = query.eq('source_id', source);
+      if (assignedTo === 'unassigned') {
+        query = query.is('assigned_to', null);
+      } else if (assignedTo) {
+        query = query.eq('assigned_to', assignedTo);
+      }
+      if (start_date) query = query.gte('created_at', start_date);
+      if (end_date) {
+        const eod = new Date(end_date); eod.setHours(23, 59, 59, 999);
+        query = query.lte('created_at', eod.toISOString());
+      }
+
+      const { data: rawLeads, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
+
+      let list = rawLeads || [];
+      if (search) {
+        list = list.filter(l => 
+          l.full_name.toLowerCase().includes(search) || 
+          l.phone.includes(search) ||
+          (l.email && l.email.toLowerCase().includes(search))
+        );
+      }
+      if (projectInterest) {
+        list = list.filter(l => l.project_interests && l.project_interests.includes(projectInterest));
+      }
+      if (budget_min !== null && !isNaN(budget_min)) {
+        list = list.filter(l => (l.budget_max || 0) >= budget_min);
+      }
+      if (budget_max !== null && !isNaN(budget_max)) {
+        list = list.filter(l => (l.budget_min || 0) <= budget_max);
+      }
+
+      const ids = list.map(l => l.id);
+      res.json({ ids, count: ids.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1135,8 +1256,11 @@ async function startServer() {
 
       // Retrieve matching lead source name for the individual lead details view
       const { data: sourceObj } = await supabase.from('lead_sources').select('name').eq('id', leadRaw.source_id).maybeSingle();
+      const remarksList = getLeadRemarks(id);
+      const latestRemark = remarksList[0]?.remark_text || (typeof leadRaw.remarks === 'string' ? leadRaw.remarks : '');
       const lead = {
         ...leadRaw,
+        remarks: latestRemark,
         sourceName: sourceObj?.name || 'Other',
         source_name: sourceObj?.name || 'Other'
       };
@@ -1179,14 +1303,14 @@ async function startServer() {
         };
       });
 
-      res.json({ lead, statusHistory, followups, siteVisits, timeline });
+      res.json({ lead, statusHistory, followups, siteVisits, timeline, remarks: remarksList });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post('/api/leads', async (req, res) => {
-    const { full_name, phone, alternate_phone, email, city, location, source, source_id, project_interests, budget_min, budget_max, bedroom_preference, assigned_to, created_by, initial_notes } = req.body;
+    const { full_name, phone, alternate_phone, email, city, location, source, source_id, project_interests, budget_min, budget_max, bedroom_preference, assigned_to, created_by, initial_notes, remarks } = req.body;
     if (!full_name || !phone) return res.status(400).json({ error: 'Name and phone required.' });
     const companyId = req.body.company_id || '99999999-9999-9999-9999-999999999999';
 
@@ -1197,6 +1321,7 @@ async function startServer() {
 
       const newId = crypto.randomUUID();
       const resolvedSrc = await resolveSourceId(source_id || source, companyId);
+      const persistentRemarks = (remarks !== undefined ? remarks : (initial_notes || '')).trim();
       const lead = {
         id: newId,
         company_id: companyId,
@@ -1220,6 +1345,22 @@ async function startServer() {
 
       const { error: insErr } = await supabase.from('leads').insert([lead]);
       if (insErr) throw insErr;
+
+      // Append initial remark to immutable history if provided
+      if (persistentRemarks) {
+        let creatorName = 'Agent';
+        if (created_by) {
+          const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', created_by).maybeSingle();
+          if (prof?.full_name) creatorName = prof.full_name;
+        }
+        await addLeadRemark(newId, {
+          remark_text: persistentRemarks,
+          created_by,
+          created_by_name: creatorName,
+          source: 'lead_creation',
+          status_at_creation: LeadStatus.NEW
+        });
+      }
 
       const { error: statusErr } = await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: newId, company_id: companyId, user_id: created_by || '11111111-1111-1111-1111-111111111111',
@@ -1262,7 +1403,7 @@ async function startServer() {
 
   app.put('/api/leads/:id', async (req, res) => {
     const { id } = req.params;
-    const { full_name, phone, alternate_phone, email, city, location, source, source_id, project_interests, budget_min, budget_max, bedroom_preference } = req.body;
+    const { full_name, phone, alternate_phone, email, city, location, source, source_id, project_interests, budget_min, budget_max, bedroom_preference, remarks, initial_notes } = req.body;
 
     try {
       const supabase = getSupabase();
@@ -1283,12 +1424,93 @@ async function startServer() {
       if (budget_max !== undefined) updates.budget_max = budget_max ? Number(budget_max) : null;
       if (bedroom_preference !== undefined) updates.bedroom_preference = bedroom_preference;
 
-      const { data, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
-      if (error) throw error;
-      res.json({ success: true, lead: data });
+      // Handle immutable lead remark if explicitly supplied and non-empty
+      const remarksToSave = remarks !== undefined ? remarks : (initial_notes !== undefined ? initial_notes : undefined);
+      if (remarksToSave && typeof remarksToSave === 'string' && remarksToSave.trim()) {
+        const latestText = getLatestLeadRemarkText(id);
+        if (latestText !== remarksToSave.trim()) {
+          await addLeadRemark(id, {
+            remark_text: remarksToSave.trim(),
+            source: 'lead_edit',
+            created_by_name: 'Lead Edit'
+          });
+        }
+      }
+
+      let data: any = null;
+      if (Object.keys(updates).length > 0) {
+        const { data: updatedLead, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
+        if (error) throw error;
+        data = updatedLead;
+      } else {
+        const { data: currentLead, error } = await supabase.from('leads').select('*').eq('id', id).single();
+        if (error) throw error;
+        data = currentLead;
+      }
+
+      const remarksList = getLeadRemarks(id);
+      res.json({ success: true, lead: { ...data, remarks: remarksList[0]?.remark_text || '' }, remarks: remarksList });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Dedicated Immutable Lead Remarks Endpoints (Strictly Append-Only)
+  app.get('/api/leads/:id/remarks', async (req, res) => {
+    const { id } = req.params;
+    try {
+      const remarks = getLeadRemarks(id);
+      res.json({ success: true, lead_id: id, remarks });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/leads/:id/remarks', async (req, res) => {
+    const { id } = req.params;
+    const { remark_text, created_by, created_by_name, source, status_at_creation, outcome_at_creation } = req.body;
+
+    if (!remark_text || !remark_text.trim()) {
+      return res.status(400).json({ error: 'Remark text is required and cannot be empty.' });
+    }
+
+    try {
+      const supabase = getSupabase();
+      // Ensure lead exists
+      const { data: lead, error: fetchErr } = await supabase.from('leads').select('id, company_id').eq('id', id).single();
+      if (fetchErr || !lead) {
+        return res.status(404).json({ error: 'Lead not found.' });
+      }
+
+      let author = created_by_name;
+      if (!author && created_by) {
+        const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', created_by).maybeSingle();
+        if (prof?.full_name) author = prof.full_name;
+      }
+
+      const newRemark = await addLeadRemark(id, {
+        remark_text: remark_text.trim(),
+        created_by,
+        created_by_name: author || 'Agent',
+        source: source || 'direct_entry',
+        status_at_creation,
+        outcome_at_creation
+      });
+
+      const allRemarks = getLeadRemarks(id);
+      res.json({ success: true, lead_id: id, remark: newRemark, remarks: allRemarks });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Disallow mutation or deletion of existing historical remarks
+  app.put('/api/leads/:id/remarks', (req, res) => {
+    res.status(405).json({ error: 'Lead remarks are immutable historical records and cannot be modified or replaced. Use POST /api/leads/:id/remarks to append a new remark.' });
+  });
+
+  app.delete('/api/leads/:id/remarks', (req, res) => {
+    res.status(405).json({ error: 'Lead remarks are immutable historical records and cannot be deleted.' });
   });
 
   app.post('/api/leads/:id/status-update', async (req, res) => {
@@ -1378,6 +1600,36 @@ async function startServer() {
         }]);
       }
 
+      // Append immutable user remark to lead_remarks
+      let cleanRemark = (req.body.remark_text || '').trim();
+      if (!cleanRemark) {
+        const raw = (remark || notes || '').trim();
+        if (raw.includes(' | Remarks: ')) {
+          cleanRemark = raw.split(' | Remarks: ').slice(1).join(' | Remarks: ').trim();
+        } else if (raw.startsWith('Remarks: ')) {
+          cleanRemark = raw.replace(/^Remarks:\s*/, '').trim();
+        } else {
+          cleanRemark = raw;
+        }
+      }
+
+      if (cleanRemark) {
+        let authorName = req.body.user_name || req.body.created_by_name;
+        if (!authorName && user_id) {
+          const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', user_id).maybeSingle();
+          if (prof?.full_name) authorName = prof.full_name;
+        }
+
+        await addLeadRemark(id, {
+          remark_text: cleanRemark,
+          created_by: user_id,
+          created_by_name: authorName || 'Agent',
+          source: 'status_transition',
+          status_at_creation: new_status,
+          outcome_at_creation: outcome || ''
+        });
+      }
+
       // --- LOG ACTIVITIES TO ENGINE ---
       // 1. Status Changed
       await trackActivity({
@@ -1390,16 +1642,7 @@ async function startServer() {
         notes: finalRemark
       });
 
-      // 2. Remarks Added (since a remark was provided during status change)
-      await trackActivity({
-        company_id: lead.company_id,
-        lead_id: id,
-        user_id,
-        activity_type: 'Remarks Added',
-        notes: finalRemark
-      });
-
-      // 3. Followup Completed (for any auto-completed followups)
+      // 2. Followup Completed (for any auto-completed followups)
       if (priorFollowups && priorFollowups.length > 0) {
         for (const pf of priorFollowups) {
           await trackActivity({
@@ -1461,7 +1704,7 @@ async function startServer() {
         });
       }
 
-      res.json({ success: true });
+      res.json({ success: true, new_status, remarks: getLeadRemarks(id) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1895,6 +2138,105 @@ async function startServer() {
     }
   });
 
+  app.post('/api/leads/bulk-delete', async (req, res) => {
+    const { leadIds } = req.body;
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds array is required.' });
+    }
+
+    try {
+      const supabase = getSupabaseAdmin();
+      const chunkSize = 100;
+      let totalDeleted = 0;
+
+      for (let i = 0; i < leadIds.length; i += chunkSize) {
+        const chunk = leadIds.slice(i, i + chunkSize);
+
+        // Nullify references in cold_data to prevent foreign key issues
+        await supabase.from('cold_data').update({ converted_lead_id: null }).in('converted_lead_id', chunk);
+
+        await Promise.all([
+          supabase.from('lead_status_updates').delete().in('lead_id', chunk),
+          supabase.from('followups').delete().in('lead_id', chunk),
+          supabase.from('site_visits').delete().in('lead_id', chunk)
+        ]);
+
+        const { error } = await supabase.from('leads').delete().in('id', chunk);
+        if (error) throw error;
+        totalDeleted += chunk.length;
+      }
+
+      res.json({ success: true, count: totalDeleted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/leads/bulk-transfer-cold', async (req, res) => {
+    const { leadIds, targetUserId, managerId } = req.body;
+    if (!leadIds || !targetUserId || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds array and targetUserId are required.' });
+    }
+
+    try {
+      const supabase = getSupabaseAdmin();
+      const chunkSize = 100;
+      let transferredCount = 0;
+
+      for (let i = 0; i < leadIds.length; i += chunkSize) {
+        const chunk = leadIds.slice(i, i + chunkSize);
+        const { data: leads } = await supabase.from('leads').select('*').in('id', chunk);
+        
+        if (leads && leads.length > 0) {
+          for (const l of leads) {
+            const coldId = crypto.randomUUID();
+            const notesPrefix = `Transferred from Leads (${l.status} status)`;
+            const existingNotes = l.notes || '';
+            const combinedNotes = existingNotes ? `${notesPrefix}\n${existingNotes}` : notesPrefix;
+
+            const coldRecord = {
+              id: coldId,
+              company_id: l.company_id,
+              full_name: l.full_name,
+              phone: l.phone,
+              alternate_phone: l.alternate_phone || null,
+              city: l.city || null,
+              location: l.location || null,
+              source_id: l.source_id,
+              notes: combinedNotes,
+              status: ColdStatus.NEW,
+              assigned_to: targetUserId,
+              created_by: managerId || targetUserId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+
+            const { error: insErr } = await supabase.from('cold_data').insert([coldRecord]);
+            if (!insErr) {
+              transferredCount++;
+            }
+          }
+
+          // Nullify references in cold_data to prevent foreign key issues
+          await supabase.from('cold_data').update({ converted_lead_id: null }).in('converted_lead_id', chunk);
+
+          // Clean up lead dependent records and remove leads from leads table
+          await Promise.all([
+            supabase.from('lead_status_updates').delete().in('lead_id', chunk),
+            supabase.from('followups').delete().in('lead_id', chunk),
+            supabase.from('site_visits').delete().in('lead_id', chunk)
+          ]);
+
+          await supabase.from('leads').delete().in('id', chunk);
+        }
+      }
+
+      res.json({ success: true, count: transferredCount });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // --- 4. COLD CALLING MODULE ENDPOINTS ---
   app.get('/api/cold-data', async (req, res) => {
@@ -1909,21 +2251,47 @@ async function startServer() {
     const assignedTo = req.query.assignedTo as string;
 
     try {
-      const supabase = getSupabase();
-      let query = supabase.from('cold_data').select('*').eq('company_id', companyId);
+      const supabase = getSupabaseAdmin();
       const scoped = await getScopedUserIds(userId, role, companyId);
-      if (scoped) query = query.in('assigned_to', scoped);
-      if (status) query = query.eq('status', status);
-      if (sourceId) query = query.eq('source_id', sourceId);
-      if (assignedTo) query = query.eq('assigned_to', assignedTo);
 
-      const { data } = await query;
-      let list = data || [];
-      if (search) list = list.filter(r => r.full_name.toLowerCase().includes(search) || r.phone.includes(search));
+      // Paginate through Supabase PostgREST 1000-row limit to retrieve all matching records
+      let allRecords: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
 
-      list.sort((a,b)=> new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      while (true) {
+        let query = supabase.from('cold_data').select('*').eq('company_id', companyId);
+        if (scoped) query = query.in('assigned_to', scoped);
+        if (status) query = query.eq('status', status);
+        if (sourceId) query = query.eq('source_id', sourceId);
+        if (assignedTo) query = query.eq('assigned_to', assignedTo);
+
+        const { data, error } = await query
+          .order('created_at', { ascending: false })
+          .range(from, from + pageSize - 1);
+
+        if (error) {
+          console.error('[Fetch Cold Data Error]', error);
+          throw error;
+        }
+        if (!data || data.length === 0) break;
+
+        allRecords.push(...data);
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+
+      let list = allRecords;
+      if (search) {
+        list = list.filter(r =>
+          (r.full_name || '').toLowerCase().includes(search) ||
+          (r.phone || '').includes(search)
+        );
+      }
+
       res.json({ records: list });
     } catch (err: any) {
+      console.error('[GET /api/cold-data Exception]', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -1994,38 +2362,81 @@ async function startServer() {
 
   app.post('/api/cold-data/bulk-assign', async (req, res) => {
     const { recordIds, targetUserId } = req.body;
-    if (!recordIds || !targetUserId) return res.status(400).json({ error: 'recordIds and targetUserId are required.' });
+    if (!recordIds || !targetUserId || !Array.isArray(recordIds) || recordIds.length === 0) {
+      return res.status(400).json({ error: 'recordIds and targetUserId are required.' });
+    }
 
     try {
-      const supabase = getSupabase();
+      const supabase = getSupabaseAdmin();
       const { data: targetUser } = await supabase.from('profiles').select('*').eq('id', targetUserId).maybeSingle();
       if (!targetUser) return res.status(404).json({ error: 'Target user does not exist.' });
 
-      const { error } = await supabase.from('cold_data').update({ assigned_to: targetUserId, updated_at: new Date().toISOString() }).in('id', recordIds);
-      if (error) {
-        return res.status(400).json({ error: error.message });
+      // Chunk into batches of 100 to avoid PostgREST query string URI length limits
+      const chunkSize = 100;
+      let totalAssigned = 0;
+
+      for (let i = 0; i < recordIds.length; i += chunkSize) {
+        const chunk = recordIds.slice(i, i + chunkSize);
+        const { error } = await supabase
+          .from('cold_data')
+          .update({ assigned_to: targetUserId, updated_at: new Date().toISOString() })
+          .in('id', chunk);
+
+        if (error) {
+          console.error('[Bulk Assign Cold Chunk Error]', error);
+          throw error;
+        }
+        totalAssigned += chunk.length;
       }
 
-      res.json({ success: true, count: recordIds.length });
+      res.json({ success: true, count: totalAssigned });
     } catch (err: any) {
+      console.error('[Bulk Assign Cold Error]', err);
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post('/api/cold-data/bulk-delete', async (req, res) => {
     const { recordIds } = req.body;
-    if (!recordIds || !Array.isArray(recordIds)) return res.status(400).json({ error: 'recordIds must be an array.' });
+    if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
+      return res.status(400).json({ error: 'recordIds must be a non-empty array.' });
+    }
 
     try {
       const supabase = getSupabaseAdmin();
-      const { error } = await supabase.from('cold_data').delete().in('id', recordIds);
-      if (error) {
-        return res.status(400).json({ error: error.message });
+      const chunkSize = 100;
+      let totalDeleted = 0;
+
+      console.log(`[Bulk Delete Cold] Deleting ${recordIds.length} records in batches of ${chunkSize}...`);
+
+      for (let i = 0; i < recordIds.length; i += chunkSize) {
+        const chunk = recordIds.slice(i, i + chunkSize);
+
+        // 1. Break any foreign key constraint in leads table
+        await supabase
+          .from('leads')
+          .update({ converted_from_cold_id: null })
+          .in('converted_from_cold_id', chunk);
+
+        // 2. Delete chunk from cold_data table
+        const { error } = await supabase
+          .from('cold_data')
+          .delete()
+          .in('id', chunk);
+
+        if (error) {
+          console.error(`[Bulk Delete Cold Error on chunk at offset ${i}]:`, error);
+          return res.status(400).json({ error: error.message || 'Failed to delete records.' });
+        }
+
+        totalDeleted += chunk.length;
       }
 
-      res.json({ success: true, count: recordIds.length });
+      console.log(`[Bulk Delete Cold] Successfully deleted ${totalDeleted} records.`);
+      res.json({ success: true, count: totalDeleted });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[Bulk Delete Cold Catch Error]:', err);
+      res.status(500).json({ error: err.message || 'Server error while bulk deleting cold data.' });
     }
   });
 
@@ -2064,6 +2475,16 @@ async function startServer() {
         created_at: new Date().toISOString(), updated_at: new Date().toISOString()
       };
       await supabase.from('leads').insert([lead]);
+
+      // Append persistent remarks for converted lead
+      if (notes || record.notes) {
+        await addLeadRemark(leadId, {
+          remark_text: (notes || record.notes || '').trim(),
+          created_by: user_id,
+          source: 'cold_data_conversion',
+          status_at_creation: LeadStatus.NEW
+        });
+      }
 
       const { error: statusErr } = await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: leadId, company_id: record.company_id, user_id: user_id || '11111111-1111-1111-1111-111111111111',
@@ -2267,6 +2688,418 @@ async function startServer() {
     }
   });
 
+  // ==========================================
+  // INTEGRATIONS API & WEBHOOKS (Meta & 99acres)
+  // ==========================================
+
+  // 1. Get Integration Settings & Ingestion Stats (Admin only)
+  app.get('/api/integrations/config', (req, res) => {
+    res.json({
+      config: integrationConfig,
+      logs: integrationLogs.slice(0, 50)
+    });
+  });
+
+  // 2. Update Integration Settings
+  app.put('/api/integrations/config', (req, res) => {
+    const { meta, ninetyNineAcres } = req.body;
+    if (meta) {
+      integrationConfig.meta = { ...integrationConfig.meta, ...meta };
+    }
+    if (ninetyNineAcres) {
+      integrationConfig.ninetyNineAcres = { ...integrationConfig.ninetyNineAcres, ...ninetyNineAcres };
+    }
+    res.json({ success: true, config: integrationConfig });
+  });
+
+  // 3. META WEBHOOK VERIFICATION (GET /api/webhooks/meta)
+  app.get('/api/webhooks/meta', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === integrationConfig.meta.verifyToken) {
+      console.log('[Meta Webhook] Successfully verified webhook challenge.');
+      return res.status(200).send(challenge);
+    } else {
+      console.warn('[Meta Webhook] Verification token mismatch or invalid mode.');
+      return res.sendStatus(403);
+    }
+  });
+
+  // 4. META INBOUND LEAD WEBHOOK (POST /api/webhooks/meta)
+  app.post('/api/webhooks/meta', async (req, res) => {
+    const body = req.body;
+    console.log('[Meta Webhook] Inbound webhook payload received:', JSON.stringify(body).slice(0, 300));
+
+    try {
+      const companyId = '99999999-9999-9999-9999-999999999999';
+      const supabase = getSupabase();
+
+      // Extract field data from common Meta Instant Forms payload or direct test JSON
+      let fullName = 'Meta Lead';
+      let phone = '';
+      let email = '';
+      let projectName = '';
+      let city = 'Delhi/NCR';
+      let formNotes = 'Inbound Lead from Meta Ads';
+
+      if (body.entry && Array.isArray(body.entry)) {
+        for (const entry of body.entry) {
+          if (entry.changes && Array.isArray(entry.changes)) {
+            for (const change of entry.changes) {
+              const val = change.value || {};
+              if (val.leadgen_id) formNotes += ` (LeadGen ID: ${val.leadgen_id})`;
+              if (val.form_id) formNotes += ` (Form ID: ${val.form_id})`;
+              if (val.field_data && Array.isArray(val.field_data)) {
+                for (const field of val.field_data) {
+                  const name = String(field.name || '').toLowerCase();
+                  const firstVal = Array.isArray(field.values) ? field.values[0] : field.values;
+                  if (name.includes('name') || name === 'full_name') fullName = firstVal || fullName;
+                  if (name.includes('phone') || name === 'phone_number') phone = String(firstVal || '').replace(/\D/g, '');
+                  if (name.includes('email')) email = firstVal || '';
+                  if (name.includes('project') || name.includes('city')) projectName = firstVal || '';
+                }
+              }
+            }
+          }
+        }
+      } else {
+        // Direct test JSON payload support
+        fullName = body.full_name || body.name || body.lead_name || 'Meta Prospect';
+        phone = String(body.phone || body.phone_number || body.mobile || '').replace(/\D/g, '');
+        email = body.email || '';
+        projectName = body.project_name || body.project || '';
+        city = body.city || 'Delhi/NCR';
+        formNotes = body.notes || 'Inbound lead via Meta Lead Ads';
+      }
+
+      if (!phone || phone.length < 7) {
+        phone = '98' + Math.floor(10000000 + Math.random() * 90000000);
+      }
+
+      // Check for duplicate phone in leads table
+      const { data: existingLead } = await supabase
+        .from('leads')
+        .select('id, full_name')
+        .eq('company_id', companyId)
+        .eq('phone', phone)
+        .maybeSingle();
+
+      const sourceId = await resolveSourceId('Meta', companyId);
+
+      if (existingLead) {
+        integrationLogs.unshift({
+          id: crypto.randomUUID(),
+          source: 'Meta',
+          lead_name: fullName,
+          phone,
+          email,
+          project_name: projectName,
+          status: 'Duplicate',
+          created_at: new Date().toISOString(),
+          raw_payload: body
+        });
+        return res.status(200).json({ status: 'ignored_duplicate', lead_id: existingLead.id });
+      }
+
+      // Create new Lead left UNASSIGNED (assigned_to: null) for Admin manual assignment
+      const newLeadId = crypto.randomUUID();
+      const leadRecord = {
+        id: newLeadId,
+        company_id: companyId,
+        full_name: fullName,
+        phone,
+        email: email || null,
+        city: city || null,
+        source_id: sourceId,
+        project_interests: projectName ? [projectName] : [],
+        status: LeadStatus.NEW,
+        assigned_to: null, // Left unassigned intentionally for Admin manual assignment!
+        created_by: '11111111-1111-1111-1111-111111111111', // Company Admin attribution
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const { error: insertErr } = await supabase.from('leads').insert([leadRecord]);
+      if (insertErr) throw insertErr;
+
+      // Log initial status
+      await supabase.from('lead_status_updates').insert([{
+        id: crypto.randomUUID(),
+        lead_id: newLeadId,
+        company_id: companyId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        previous_status: LeadStatus.NEW,
+        new_status: LeadStatus.NEW,
+        remark: `${formNotes} (Awaiting Admin manual allocation)`,
+        created_at: new Date().toISOString()
+      }]);
+
+      await trackActivity({
+        company_id: companyId,
+        lead_id: newLeadId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        activity_type: 'Lead Created',
+        previous_status: undefined,
+        new_status: LeadStatus.NEW,
+        created_by: '11111111-1111-1111-1111-111111111111',
+        notes: `Inbound Meta Ad Lead: ${fullName} (${phone}) - Unassigned`
+      });
+
+      integrationConfig.meta.leadsIngestedCount += 1;
+      integrationConfig.meta.lastReceivedAt = new Date().toISOString();
+
+      integrationLogs.unshift({
+        id: crypto.randomUUID(),
+        source: 'Meta',
+        lead_name: fullName,
+        phone,
+        email,
+        project_name: projectName,
+        status: 'Ingested',
+        created_at: new Date().toISOString(),
+        raw_payload: body
+      });
+
+      res.status(200).json({ success: true, lead_id: newLeadId, status: 'Ingested (Unassigned)' });
+    } catch (err: any) {
+      console.error('[Meta Webhook] Ingestion error:', err);
+      integrationLogs.unshift({
+        id: crypto.randomUUID(),
+        source: 'Meta',
+        lead_name: req.body?.full_name || 'Error lead',
+        phone: req.body?.phone || 'Unknown',
+        status: 'Error',
+        created_at: new Date().toISOString(),
+        raw_payload: { error: err.message }
+      });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5. 99ACRES INBOUND LEAD WEBHOOK / API (POST /api/webhooks/99acres)
+  app.post('/api/webhooks/99acres', async (req, res) => {
+    const body = req.body;
+    console.log('[99acres Webhook] Inbound payload received:', JSON.stringify(body).slice(0, 300));
+
+    try {
+      const companyId = '99999999-9999-9999-9999-999999999999';
+      const supabase = getSupabase();
+
+      // Standard 99acres lead payload mapping (supporting XML-to-JSON or native JSON webhook formats)
+      const fullName = body.name || body.full_name || body.buyer_name || body.lead_name || '99acres Buyer';
+      let phone = String(body.phone || body.mobile || body.contact_number || '').replace(/\D/g, '');
+      const email = body.email || body.buyer_email || '';
+      const projectName = body.project_name || body.property_name || body.prop_name || '';
+      const city = body.city || 'Delhi/NCR';
+      const budgetMin = body.budget_min ? Number(body.budget_min) : null;
+      const budgetMax = body.budget_max ? Number(body.budget_max) : null;
+      const notes = body.query || body.remarks || body.comments || 'Inbound Inquiry via 99acres portal';
+
+      if (!phone || phone.length < 7) {
+        phone = '99' + Math.floor(10000000 + Math.random() * 90000000);
+      }
+
+      // Check for duplicate phone in leads table
+      const { data: existingLead } = await supabase
+        .from('leads')
+        .select('id, full_name')
+        .eq('company_id', companyId)
+        .eq('phone', phone)
+        .maybeSingle();
+
+      const sourceId = await resolveSourceId('99acres', companyId);
+
+      if (existingLead) {
+        integrationLogs.unshift({
+          id: crypto.randomUUID(),
+          source: '99acres',
+          lead_name: fullName,
+          phone,
+          email,
+          project_name: projectName,
+          status: 'Duplicate',
+          created_at: new Date().toISOString(),
+          raw_payload: body
+        });
+        return res.status(200).json({ status: 'ignored_duplicate', lead_id: existingLead.id });
+      }
+
+      // Create new Lead left UNASSIGNED (assigned_to: null) for Admin manual assignment
+      const newLeadId = crypto.randomUUID();
+      const leadRecord = {
+        id: newLeadId,
+        company_id: companyId,
+        full_name: fullName,
+        phone,
+        email: email || null,
+        city: city || null,
+        source_id: sourceId,
+        project_interests: projectName ? [projectName] : [],
+        budget_min: budgetMin,
+        budget_max: budgetMax,
+        status: LeadStatus.NEW,
+        assigned_to: null, // Left unassigned intentionally for Admin manual assignment!
+        created_by: '11111111-1111-1111-1111-111111111111',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const { error: insertErr } = await supabase.from('leads').insert([leadRecord]);
+      if (insertErr) throw insertErr;
+
+      // Append persistent remarks
+      if (notes) {
+        await addLeadRemark(newLeadId, {
+          remark_text: notes.trim(),
+          created_by_name: 'Webhook Ingestion (99acres)',
+          source: 'webhook_ingestion',
+          status_at_creation: LeadStatus.NEW
+        });
+      }
+
+      // Log initial status update
+      await supabase.from('lead_status_updates').insert([{
+        id: crypto.randomUUID(),
+        lead_id: newLeadId,
+        company_id: companyId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        previous_status: LeadStatus.NEW,
+        new_status: LeadStatus.NEW,
+        remark: `${notes} (Awaiting Admin manual allocation)`,
+        created_at: new Date().toISOString()
+      }]);
+
+      await trackActivity({
+        company_id: companyId,
+        lead_id: newLeadId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        activity_type: 'Lead Created',
+        previous_status: undefined,
+        new_status: LeadStatus.NEW,
+        created_by: '11111111-1111-1111-1111-111111111111',
+        notes: `Inbound 99acres Inquiry: ${fullName} (${phone}) - Unassigned`
+      });
+
+      integrationConfig.ninetyNineAcres.leadsIngestedCount += 1;
+      integrationConfig.ninetyNineAcres.lastReceivedAt = new Date().toISOString();
+
+      integrationLogs.unshift({
+        id: crypto.randomUUID(),
+        source: '99acres',
+        lead_name: fullName,
+        phone,
+        email,
+        project_name: projectName,
+        status: 'Ingested',
+        created_at: new Date().toISOString(),
+        raw_payload: body
+      });
+
+      res.status(200).json({ success: true, lead_id: newLeadId, status: 'Ingested (Unassigned)' });
+    } catch (err: any) {
+      console.error('[99acres Webhook] Ingestion error:', err);
+      integrationLogs.unshift({
+        id: crypto.randomUUID(),
+        source: '99acres',
+        lead_name: req.body?.name || 'Error lead',
+        phone: req.body?.phone || 'Unknown',
+        status: 'Error',
+        created_at: new Date().toISOString(),
+        raw_payload: { error: err.message }
+      });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6. Manual trigger simulation endpoint for testing
+  app.post('/api/integrations/simulate', async (req, res) => {
+    const { source, leadData } = req.body;
+    if (!source || !['Meta', '99acres'].includes(source)) {
+      return res.status(400).json({ error: 'Valid source (Meta or 99acres) is required.' });
+    }
+
+    try {
+      const companyId = '99999999-9999-9999-9999-999999999999';
+      const supabase = getSupabase();
+
+      const fullName = leadData?.full_name || (source === 'Meta' ? 'Rahul Sharma (Meta Ad)' : 'Vikas Gupta (99acres)');
+      const phone = leadData?.phone || ('98' + Math.floor(10000000 + Math.random() * 90000000));
+      const email = leadData?.email || `${fullName.toLowerCase().replace(/\s+/g, '.')}@example.com`;
+      const projectName = leadData?.project_name || 'Godrej Woods';
+      const city = leadData?.city || 'Noida';
+
+      const sourceId = await resolveSourceId(source, companyId);
+      const newLeadId = crypto.randomUUID();
+
+      const leadRecord = {
+        id: newLeadId,
+        company_id: companyId,
+        full_name: fullName,
+        phone,
+        email,
+        city,
+        source_id: sourceId,
+        project_interests: [projectName],
+        status: LeadStatus.NEW,
+        assigned_to: null, // Left unassigned for Admin manual allocation
+        created_by: '11111111-1111-1111-1111-111111111111',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const { error: insertErr } = await supabase.from('leads').insert([leadRecord]);
+      if (insertErr) throw insertErr;
+
+      await supabase.from('lead_status_updates').insert([{
+        id: crypto.randomUUID(),
+        lead_id: newLeadId,
+        company_id: companyId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        previous_status: LeadStatus.NEW,
+        new_status: LeadStatus.NEW,
+        remark: `Simulated inbound lead from ${source} - Awaiting Admin manual assignment`,
+        created_at: new Date().toISOString()
+      }]);
+
+      await trackActivity({
+        company_id: companyId,
+        lead_id: newLeadId,
+        user_id: '11111111-1111-1111-1111-111111111111',
+        activity_type: 'Lead Created',
+        previous_status: undefined,
+        new_status: LeadStatus.NEW,
+        created_by: '11111111-1111-1111-1111-111111111111',
+        notes: `Simulated lead from ${source}: ${fullName} (${phone}) - Unassigned`
+      });
+
+      if (source === 'Meta') {
+        integrationConfig.meta.leadsIngestedCount += 1;
+        integrationConfig.meta.lastReceivedAt = new Date().toISOString();
+      } else {
+        integrationConfig.ninetyNineAcres.leadsIngestedCount += 1;
+        integrationConfig.ninetyNineAcres.lastReceivedAt = new Date().toISOString();
+      }
+
+      integrationLogs.unshift({
+        id: crypto.randomUUID(),
+        source,
+        lead_name: fullName,
+        phone,
+        email,
+        project_name: projectName,
+        status: 'Ingested',
+        created_at: new Date().toISOString(),
+        raw_payload: req.body
+      });
+
+      res.json({ success: true, lead_id: newLeadId, lead: leadRecord });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.delete('/api/leads/:id', async (req, res) => {
     const { id } = req.params;
     try {
@@ -2283,6 +3116,10 @@ async function startServer() {
 
       const { error } = await supabase.from('leads').delete().eq('id', id);
       if (error) throw error;
+
+      // Clean up lead remarks from persistent store
+      deleteLeadRemarks(id);
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

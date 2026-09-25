@@ -16,6 +16,7 @@ import ReportsScreen from './components/ReportsScreen';
 import LeadSourcesScreen from './components/LeadSourcesScreen';
 import ActivityHistoryScreen from './components/ActivityHistoryScreen';
 import AICoachScreen from './components/AICoachScreen';
+import IntegrationsScreen from './components/IntegrationsScreen';
 import SkeletonLoader from './components/SkeletonLoader';
 import LoginScreen from './components/LoginScreen';
 import { Building2 } from 'lucide-react';
@@ -59,6 +60,8 @@ export default function App() {
         return <ReportsScreen />;
       case 'lead-sources':
         return <LeadSourcesScreen />;
+      case 'integrations':
+        return <IntegrationsScreen />;
       case 'activity-history':
         return <ActivityHistoryScreen />;
       default:

@@ -119,6 +119,7 @@ CREATE TABLE leads (
   budget_min NUMERIC,
   budget_max NUMERIC,
   bedroom_preference TEXT, -- "1BHK" | "2BHK" | "3BHK" etc.
+  remarks TEXT, -- Permanent Lead-Level Remarks / Notes
   status lead_status NOT NULL DEFAULT 'New',
   assigned_to UUID REFERENCES profiles(id) ON DELETE SET NULL,
   booking_amount NUMERIC,
@@ -143,6 +144,19 @@ CREATE TABLE lead_status_updates (
   outcome TEXT,
   remark TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Table: lead_remarks (Immutable, append-only historical log of all user remarks)
+CREATE TABLE lead_remarks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  remark_text TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_by_name TEXT,
+  source TEXT DEFAULT 'status_transition',
+  status_at_creation TEXT,
+  outcome_at_creation TEXT
 );
 
 -- Table: followups
@@ -253,6 +267,9 @@ CREATE INDEX idx_activities_lead_id ON activities (lead_id);
 CREATE INDEX idx_activities_company_type_date ON activities (company_id, activity_type, created_at);
 CREATE INDEX idx_activities_user_date ON activities (user_id, created_at);
 
+-- Lead Remarks Indexes
+CREATE INDEX idx_lead_remarks_lead_id ON lead_remarks (lead_id, created_at DESC);
+
 
 -- 4. ROW-LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
@@ -264,6 +281,7 @@ ALTER TABLE cold_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE site_visits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE followups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lead_status_updates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_remarks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE project_configurations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activities ENABLE ROW LEVEL SECURITY;

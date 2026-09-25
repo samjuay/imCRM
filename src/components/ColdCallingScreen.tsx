@@ -8,7 +8,7 @@ import { useAppStore } from '../lib/store';
 import { ColdStatus, UserRole } from '../types';
 import { 
   ArrowRightLeft, FileSpreadsheet, Key, Lock, PhoneCall, Plus, Search, 
-  Sparkles, Upload, UserCheck, ShieldClose, AlertTriangle, CheckCircle, ExternalLink, MessageSquare
+  Sparkles, Upload, UserCheck, ShieldClose, AlertTriangle, CheckCircle, ExternalLink, MessageSquare, Loader2
 } from 'lucide-react';
 import BottomDrawer from './BottomDrawer';
 import EmptyState from './EmptyState';
@@ -39,21 +39,24 @@ export default function ColdCallingScreen() {
     setActiveTab,
     setActiveLeadId,
     leadSources,
-    fetchLeadSources
+    fetchLeadSources,
+    coldFilters,
+    setColdFilters
   } = useAppStore();
 
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [sourceFilter, setSourceFilter] = useState('');
-  const [assignedSeFilter, setAssignedSeFilter] = useState('');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [search, setSearch] = useState(coldFilters?.search || '');
+  const [statusFilter, setStatusFilter] = useState(coldFilters?.status || '');
+  const [sourceFilter, setSourceFilter] = useState(coldFilters?.sourceId || '');
+  const [assignedSeFilter, setAssignedSeFilter] = useState(coldFilters?.assignedTo || '');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [isDeletingCold, setIsDeletingCold] = useState(false);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message: msg, type });
     setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
+      setToast(null);
+    }, 4500);
   };
 
   const [activeSubTab, setActiveSubTab] = useState<'assigned' | 'upload'>('assigned');
@@ -214,8 +217,24 @@ export default function ColdCallingScreen() {
   const isAdminOrTL = activeUser && [UserRole.COMPANY_ADMIN, UserRole.TEAM_LEADER].includes(activeUser.role);
   const assignableUsers = allUsers.filter(u => u.is_active);
 
+  // Derived filtered records: Canonical Store + Current Filter State = Derived UI
+  const derivedRecords = React.useMemo(() => {
+    return coldRecords.filter((rec) => {
+      if (statusFilter && rec.status !== statusFilter) return false;
+      if (sourceFilter && rec.source_id !== sourceFilter) return false;
+      if (assignedSeFilter && rec.assigned_to !== assignedSeFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const matchName = (rec.full_name || '').toLowerCase().includes(q);
+        const matchPhone = (rec.phone || '').includes(q);
+        if (!matchName && !matchPhone) return false;
+      }
+      return true;
+    });
+  }, [coldRecords, statusFilter, sourceFilter, assignedSeFilter, search]);
+
   const toggleSelectAll = () => {
-    const visibleUnqualified = coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
+    const visibleUnqualified = derivedRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
     const visibleUnqualifiedIds = visibleUnqualified.map(r => r.id);
     const allVisibleSelected = visibleUnqualifiedIds.every(id => selectedIds.includes(id));
 
@@ -227,13 +246,12 @@ export default function ColdCallingScreen() {
   };
 
   const handleBulkAssignSubmit = async () => {
-    const toAssign = selectedIds.filter(id => coldRecords.some(r => r.id === id));
+    const toAssign = selectedIds.filter(id => derivedRecords.some(r => r.id === id));
     if (toAssign.length === 0 || !targetAssigneeId) return;
     const ok = await bulkAssignCold(toAssign, targetAssigneeId);
     if (ok) {
       setSelectedIds(selectedIds.filter(id => !toAssign.includes(id)));
       setTargetAssigneeId('');
-      fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
       showToast(`Selected ${toAssign.length} cold contacts assigned successfully.`);
     } else {
       alert("Failed to assign selected cold contacts.");
@@ -241,7 +259,7 @@ export default function ColdCallingScreen() {
   };
 
   const handleBulkDeleteSubmit = () => {
-    const visibleSelectedIds = selectedIds.filter(id => coldRecords.some(r => r.id === id));
+    const visibleSelectedIds = selectedIds.filter(id => derivedRecords.some(r => r.id === id));
     if (visibleSelectedIds.length === 0) {
       alert("No selected cold contacts match the currently applied filters.");
       return;
@@ -276,8 +294,8 @@ export default function ColdCallingScreen() {
   };
 
   const isSE = activeUser?.role === UserRole.SALES_EXECUTIVE;
-  const visibleSelectedCount = selectedIds.filter(id => coldRecords.some(r => r.id === id)).length;
-  const visibleUnqualified = coldRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
+  const visibleSelectedCount = selectedIds.filter(id => derivedRecords.some(r => r.id === id)).length;
+  const visibleUnqualified = derivedRecords.filter(r => r.status !== ColdStatus.CONVERTED_TO_LEAD);
   const isAllVisibleSelected = visibleUnqualified.length > 0 && visibleUnqualified.every(r => selectedIds.includes(r.id));
 
   return (
@@ -432,7 +450,7 @@ export default function ColdCallingScreen() {
           )}
 
           {/* Select All Checkbox */}
-          {isAdminOrTL && coldRecords.some(r => r.status !== ColdStatus.CONVERTED_TO_LEAD) && (
+          {isAdminOrTL && derivedRecords.some(r => r.status !== ColdStatus.CONVERTED_TO_LEAD) && (
             <div className="flex justify-between items-center px-1">
               <label className="flex items-center space-x-2.5 cursor-pointer select-none">
                 <input
@@ -450,10 +468,10 @@ export default function ColdCallingScreen() {
 
           {/* List panel */}
           <div className="space-y-3">
-            {coldRecords.length === 0 ? (
+            {derivedRecords.length === 0 ? (
               <EmptyState title="No Cold Contacts Assigned" description="You have finished all scheduled lists! Simulates importing fresh records to call people." icon={Sparkles} />
             ) : (
-              coldRecords.map((rec) => {
+              derivedRecords.map((rec) => {
                 const isConverted = rec.status === ColdStatus.CONVERTED_TO_LEAD;
                 
                 return (
@@ -877,42 +895,71 @@ export default function ColdCallingScreen() {
               <h3 className="font-display font-bold text-[#0B1F33] text-sm">Confirm Permanent Deletion</h3>
             </div>
             <p className="text-xs text-text-secondary leading-relaxed">
-              Are you sure you want to permanently delete the <strong className="text-red-600 font-bold">{selectedIds.filter(id => coldRecords.some(r => r.id === id)).length}</strong> selected cold contacts matching the applied filters? This action is irreversible and will purge these records completely from the system.
+              Are you sure you want to permanently delete the <strong className="text-red-600 font-bold">{selectedIds.filter(id => derivedRecords.some(r => r.id === id)).length}</strong> selected cold contacts matching the applied filters? This action is irreversible and will purge these records completely from the system.
             </p>
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
                 onClick={() => setDeleteConfirmationOpen(false)}
-                className="h-10 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+                disabled={isDeletingCold}
+                className="h-10 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={async () => {
-                  setDeleteConfirmationOpen(false);
-                  const toDelete = selectedIds.filter(id => coldRecords.some(r => r.id === id));
-                  const ok = await bulkDeleteCold(toDelete);
-                  if (ok) {
-                    setSelectedIds(selectedIds.filter(id => !toDelete.includes(id)));
-                    showToast(`Successfully deleted ${toDelete.length} cold contacts.`);
-                    fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
-                  } else {
-                    alert("Failed to delete selected cold contacts.");
+                  const toDelete = selectedIds.filter(id => derivedRecords.some(r => r.id === id));
+                  if (toDelete.length === 0) {
+                    setDeleteConfirmationOpen(false);
+                    return;
+                  }
+                  setIsDeletingCold(true);
+                  try {
+                    const ok = await bulkDeleteCold(toDelete);
+                    if (ok) {
+                      setSelectedIds(prev => prev.filter(id => !toDelete.includes(id)));
+                      showToast(`Successfully deleted ${toDelete.length} cold contacts.`, 'success');
+                      setDeleteConfirmationOpen(false);
+                      await fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+                    } else {
+                      const err = useAppStore.getState().error;
+                      showToast(err || "Failed to delete selected cold contacts.", 'error');
+                    }
+                  } catch (err: any) {
+                    showToast(err?.message || "Failed to delete selected cold contacts.", 'error');
+                  } finally {
+                    setIsDeletingCold(false);
                   }
                 }}
-                className="h-10 px-5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase rounded-xl shadow active:scale-95 transition-all cursor-pointer"
+                disabled={isDeletingCold}
+                className="h-10 px-5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase rounded-xl shadow active:scale-95 transition-all cursor-pointer flex items-center space-x-1.5 disabled:opacity-60"
               >
-                Permanently Delete
+                {isDeletingCold ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Permanently Delete</span>
+                )}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Success Toast */}
-      {toastMessage && (
-        <div className="fixed top-5 right-5 z-[10000] bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg flex items-center space-x-2 animate-fade-in">
-          <CheckCircle className="w-5 h-5 shrink-0" />
-          <span className="text-xs font-bold">{toastMessage}</span>
+      {/* Floating Status Toast */}
+      {toast && (
+        <div
+          className={`fixed top-5 right-5 z-[10000] text-white px-4 py-3 rounded-xl shadow-lg flex items-center space-x-2 animate-fade-in ${
+            toast.type === 'error' ? 'bg-red-600 border border-red-700' : 'bg-emerald-600 border border-emerald-700'
+          }`}
+        >
+          {toast.type === 'error' ? (
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+          ) : (
+            <CheckCircle className="w-5 h-5 shrink-0" />
+          )}
+          <span className="text-xs font-bold">{toast.message}</span>
         </div>
       )}
     </div>

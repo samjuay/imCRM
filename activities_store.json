@@ -1,0 +1,144 @@
+[
+  {
+    "id": "76611c06-312b-4d60-8e34-67694c28b872",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "6adca3e0-53a6-4c58-a607-c4caa1e88905",
+    "user_id": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "activity_type": "Status Changed",
+    "previous_status": "Followup Scheduled",
+    "new_status": "Followup Scheduled",
+    "created_at": "2026-09-24T13:35:23.601Z",
+    "created_by": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "notes": "Outcome: Warm Follow-up Callback | Remarks: Testing"
+  },
+  {
+    "id": "1be25ffb-529d-4423-a14d-89e679fd61a4",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "6adca3e0-53a6-4c58-a607-c4caa1e88905",
+    "user_id": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "activity_type": "Remarks Added",
+    "created_at": "2026-09-24T13:35:23.764Z",
+    "created_by": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "notes": "Outcome: Warm Follow-up Callback | Remarks: Testing"
+  },
+  {
+    "id": "792ec805-fa50-4261-90a8-afe42d035e12",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "6adca3e0-53a6-4c58-a607-c4caa1e88905",
+    "user_id": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "activity_type": "Followup Completed",
+    "created_at": "2026-09-24T13:35:23.905Z",
+    "created_by": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "notes": "Completed automatically during status change to Followup Scheduled."
+  },
+  {
+    "id": "a868d689-52bb-4f95-9ea0-769ae1d9c8f9",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "6adca3e0-53a6-4c58-a607-c4caa1e88905",
+    "user_id": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "activity_type": "Followup Added",
+    "created_at": "2026-09-24T13:35:24.082Z",
+    "created_by": "011aaa9b-d3d5-4f56-aa9e-0a09af985d46",
+    "notes": "Followup type: Call. Scheduled for: 2026-10-03T14:05. notes: Scheduled during Followup Scheduled status update."
+  },
+  {
+    "id": "ab3d7c1d-2293-4810-a59b-5b8cbcb4e5c2",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Lead Created",
+    "new_status": "New",
+    "created_at": "2026-09-24T13:57:49.388Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Lead creation lock"
+  },
+  {
+    "id": "968e47ea-df6b-479d-82f5-7d72e8050ee9",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Lead Assigned",
+    "new_status": "New",
+    "created_at": "2026-09-24T13:57:49.606Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Lead assigned on creation"
+  },
+  {
+    "id": "52176132-b2a7-4cc6-87d9-fa223c8756f3",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Status Changed",
+    "previous_status": "New",
+    "new_status": "Followup Scheduled",
+    "created_at": "2026-09-24T13:57:50.572Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Outcome: Warm Follow-up Callback | Remarks: Client asked for callback tomorrow."
+  },
+  {
+    "id": "2dd02fa1-1416-4d85-ba88-78fedf20095e",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Followup Added",
+    "created_at": "2026-09-24T13:57:50.781Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Followup type: Call. Scheduled for: 2026-09-25T13:57:49.852Z. notes: Client callback"
+  },
+  {
+    "id": "3fdb08a6-df9c-4607-862c-c25d992bdc7c",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Status Changed",
+    "previous_status": "Followup Scheduled",
+    "new_status": "Site Visit Scheduled",
+    "created_at": "2026-09-24T13:57:51.732Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Outcome: Site Visit Confirmed | Remarks: Site visit confirmed for Saturday."
+  },
+  {
+    "id": "7c0b2438-441e-4196-b10a-3f02719fa58f",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Followup Completed",
+    "created_at": "2026-09-24T13:57:51.883Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Completed automatically during status change to Site Visit Scheduled."
+  },
+  {
+    "id": "5e87eef5-a393-45b4-9467-cf2b46ca063c",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Site Visit Planned",
+    "created_at": "2026-09-24T13:57:52.018Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Site visit scheduled for: 2026-09-27. Time: 11:00"
+  },
+  {
+    "id": "3a395732-5f99-4109-b2ba-4b0f6a627dad",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Status Changed",
+    "previous_status": "Site Visit Scheduled",
+    "new_status": "Not Interested",
+    "created_at": "2026-09-24T13:57:52.794Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Outcome: Budget Mismatch / Postponed | Remarks: Client postponed purchase decision."
+  },
+  {
+    "id": "f29734ad-b202-4858-9859-550cd1d53c05",
+    "company_id": "99999999-9999-9999-9999-999999999999",
+    "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+    "user_id": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "activity_type": "Status Changed",
+    "previous_status": "Not Interested",
+    "new_status": "Interested",
+    "created_at": "2026-09-24T13:57:53.603Z",
+    "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+    "notes": "Outcome: Client Re-engaged | Remarks: Client requested updated pricing details."
+  }
+]

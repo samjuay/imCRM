@@ -97,6 +97,7 @@ export interface Lead {
   budget_min?: number;
   budget_max?: number;
   bedroom_preference?: string; // e.g. "1BHK", "2BHK", "3BHK"
+  remarks?: string; // Permanent Lead-Level Remarks / Notes
   status: LeadStatus;
   assigned_to: string; // User ID
   booking_amount?: number;
@@ -105,6 +106,18 @@ export interface Lead {
   created_by: string; // User ID
   created_at: string;
   updated_at: string;
+}
+
+export interface LeadRemark {
+  id: string;
+  lead_id: string;
+  remark_text: string;
+  created_at: string;
+  created_by?: string;
+  created_by_name?: string;
+  source?: 'status_transition' | 'lead_creation' | 'cold_data_conversion' | 'direct_entry' | string;
+  status_at_creation?: string;
+  outcome_at_creation?: string;
 }
 
 export interface LeadStatusUpdate {
@@ -235,3 +248,34 @@ export function getInitials(fullName: string | null | undefined): string {
   }
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+export interface WebhookIntegrationConfig {
+  meta: {
+    enabled: boolean;
+    verifyToken: string;
+    appSecret: string;
+    pageId?: string;
+    lastReceivedAt?: string;
+    leadsIngestedCount: number;
+  };
+  ninetyNineAcres: {
+    enabled: boolean;
+    apiKey: string;
+    queryUrl?: string;
+    lastReceivedAt?: string;
+    leadsIngestedCount: number;
+  };
+}
+
+export interface IngestedIntegrationLog {
+  id: string;
+  source: 'Meta' | '99acres';
+  lead_name: string;
+  phone: string;
+  email?: string;
+  project_name?: string;
+  status: 'Ingested' | 'Duplicate' | 'Error';
+  created_at: string;
+  raw_payload?: any;
+}
+

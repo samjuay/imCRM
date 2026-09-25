@@ -1,0 +1,67 @@
+{
+  "4ee355d3-9ae9-4a54-a787-3d8a749b06b5": [
+    {
+      "id": "c67e332b-8a51-4f35-8ae8-ff3bf2142f3f",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Client is interested but wants to visit after discussing with family.",
+      "created_at": "2026-09-24T13:57:49.165Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "lead_creation",
+      "status_at_creation": "New"
+    },
+    {
+      "id": "50769089-a241-4987-a75a-0098fbc46502",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Client asked for callback tomorrow.",
+      "created_at": "2026-09-24T13:57:50.506Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "status_transition",
+      "status_at_creation": "Followup Scheduled",
+      "outcome_at_creation": "Warm Follow-up Callback"
+    },
+    {
+      "id": "cba8c2ca-eb81-4e4f-9f65-8819c91415f2",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Site visit confirmed for Saturday.",
+      "created_at": "2026-09-24T13:57:51.670Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "status_transition",
+      "status_at_creation": "Site Visit Scheduled",
+      "outcome_at_creation": "Site Visit Confirmed"
+    },
+    {
+      "id": "d604e160-5c35-4aa4-bc73-b4dd29e6def4",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Client postponed purchase decision.",
+      "created_at": "2026-09-24T13:57:52.697Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "status_transition",
+      "status_at_creation": "Not Interested",
+      "outcome_at_creation": "Budget Mismatch / Postponed"
+    },
+    {
+      "id": "1d63530c-5bba-45a8-a27f-33632bf1602d",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Client requested updated pricing details.",
+      "created_at": "2026-09-24T13:57:53.514Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "status_transition",
+      "status_at_creation": "Interested",
+      "outcome_at_creation": "Client Re-engaged"
+    },
+    {
+      "id": "4001e187-4397-40a9-8973-d37eda1b5685",
+      "lead_id": "4ee355d3-9ae9-4a54-a787-3d8a749b06b5",
+      "remark_text": "Client confirmed availability for Saturday morning call.",
+      "created_at": "2026-09-24T13:57:53.801Z",
+      "created_by": "ee75a312-baf5-456d-bd53-a981bb83ac24",
+      "created_by_name": "Jitendra Ahire",
+      "source": "direct_entry"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ import { useAppStore } from '../lib/store';
 import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, Sparkles } from 'lucide-react';
 
 export default function BottomNavigation() {
-  const { activeTab, setActiveTab, activeLeadId, activeProjectId } = useAppStore();
+  const { activeTab, setActiveTab, activeLeadId, setActiveLeadId, activeProjectId } = useAppStore();
 
   const navItems = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
@@ -29,7 +29,16 @@ export default function BottomNavigation() {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                if (activeLeadId) {
+                  setActiveLeadId(null);
+                  const params = new URLSearchParams(window.location.search);
+                  params.delete('lead_id');
+                  const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+                  window.history.replaceState({}, '', newUrl);
+                }
+                setActiveTab(item.id);
+              }}
               className={`flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl relative transition-all active:scale-90 ${
                 isActive 
                   ? 'bg-premium-gold text-white font-bold font-display shadow-lg' 

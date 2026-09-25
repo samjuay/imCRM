@@ -14,6 +14,7 @@ import {
 import BottomDrawer from './BottomDrawer';
 import EmptyState from './EmptyState';
 import SkeletonLoader from './SkeletonLoader';
+import { LeadRemarksCard } from './LeadRemarksCard';
 
 const STATUS_OUTCOMES: Record<LeadStatus, string[]> = {
   [LeadStatus.NEW]: ['Fresh Lead Allocated', 'Details Shared on WhatsApp'],
@@ -47,7 +48,10 @@ const INVALID_REASONS = [
   'Other'
 ];
 
-const getInitialNotes = (statusHistory: any[]) => {
+const getInitialNotes = (statusHistory: any[], lead?: any) => {
+  if (lead && lead.remarks !== undefined && lead.remarks !== null && lead.remarks !== '') {
+    return lead.remarks;
+  }
   if (!statusHistory || statusHistory.length === 0) return '';
   const record = statusHistory.find(
     (h: any) => h.previous_status === 'None' || (h.previous_status === 'New' && h.new_status === 'New')
@@ -85,10 +89,14 @@ export default function LeadsScreen() {
     createLead,
     updateLeadBasic,
     updateLeadStatus,
+    addLeadRemark,
     scheduleFollowup,
     scheduleSiteVisit,
     bulkReassignLeads,
     bulkUpdateLeadsStatus,
+    bulkDeleteLeads,
+    bulkTransferLeadsToCold,
+    fetchAllFilteredLeadIds,
     bulkImportLeads,
     projects,
     users: allUsers,
@@ -126,6 +134,10 @@ export default function LeadsScreen() {
   const [isOpenBulkSheet, setIsOpenBulkSheet] = useState(false);
   const [bulkTargetUser, setBulkTargetUser] = useState('');
   const [bulkTargetStatus, setBulkTargetStatus] = useState('');
+  const [bulkTransferDestination, setBulkTransferDestination] = useState<'leads' | 'cold'>('leads');
+  const [isFetchingAllIds, setIsFetchingAllIds] = useState(false);
+  const [isBulkExecuting, setIsBulkExecuting] = useState(false);
+  const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
 
   // Delete Lead Confirmation Modal states
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -421,31 +433,88 @@ export default function LeadsScreen() {
     const urlEndDate = params.get('end_date') || '';
     const urlActiveLead = params.get('lead_id') || '';
 
-    if (urlSearch) setSearch(urlSearch);
-    if (urlStatus) setStatusFilter(urlStatus);
-    if (urlSource) setSourceFilter(urlSource);
-    if (urlProject) setProjectFilter(urlProject);
-    if (urlAssigned) setAssignFilter(urlAssigned);
-    if (urlBudgetMin) setBudgetMinFilter(urlBudgetMin);
-    if (urlBudgetMax) setBudgetMaxFilter(urlBudgetMax);
-    if (urlStartDate) setStartDateFilter(urlStartDate);
-    if (urlEndDate) setEndDateFilter(urlEndDate);
-    if (urlActiveLead) setActiveLeadId(urlActiveLead);
+    const storeFilters = useAppStore.getState().leadsFilters;
+    const effectiveSearch = urlSearch || storeFilters.search || '';
+    const effectiveStatus = urlStatus || storeFilters.status || '';
+    const effectiveSource = urlSource || storeFilters.source || '';
+    const effectiveProject = urlProject || storeFilters.project || '';
+    const effectiveAssigned = urlAssigned || storeFilters.assignedTo || '';
+    const effectiveBudgetMin = urlBudgetMin || storeFilters.budget_min || '';
+    const effectiveBudgetMax = urlBudgetMax || storeFilters.budget_max || '';
+    const effectiveStartDate = urlStartDate || storeFilters.start_date || '';
+    const effectiveEndDate = urlEndDate || storeFilters.end_date || '';
 
-    // Initial fetch of leads with URL parameters
+    setSearch(effectiveSearch);
+    setStatusFilter(effectiveStatus);
+    setSourceFilter(effectiveSource);
+    setProjectFilter(effectiveProject);
+    setAssignFilter(effectiveAssigned);
+    setBudgetMinFilter(effectiveBudgetMin);
+    setBudgetMaxFilter(effectiveBudgetMax);
+    setStartDateFilter(effectiveStartDate);
+    setEndDateFilter(effectiveEndDate);
+
+    const storeActiveLeadId = useAppStore.getState().activeLeadId;
+    if (storeActiveLeadId) {
+      if (urlActiveLead !== storeActiveLeadId) {
+        params.set('lead_id', storeActiveLeadId);
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        window.history.replaceState({ path: newUrl }, '', newUrl);
+      }
+    } else if (urlActiveLead) {
+      setActiveLeadId(urlActiveLead);
+    }
+
+    // Initial fetch of leads with active parameters
     fetchLeads({
       page: 1,
-      search: urlSearch,
-      status: urlStatus,
-      source: urlSource,
-      project: urlProject,
-      assignedTo: urlAssigned,
-      budget_min: urlBudgetMin,
-      budget_max: urlBudgetMax,
-      start_date: urlStartDate,
-      end_date: urlEndDate
+      search: effectiveSearch,
+      status: effectiveStatus,
+      source: effectiveSource,
+      project: effectiveProject,
+      assignedTo: effectiveAssigned,
+      budget_min: effectiveBudgetMin,
+      budget_max: effectiveBudgetMax,
+      start_date: effectiveStartDate,
+      end_date: effectiveEndDate
     });
   }, [activeUser]);
+
+  const handleBackToPipelineOrDashboard = () => {
+    setActiveLeadId(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('lead_id');
+    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+    window.history.replaceState({ path: newUrl }, '', newUrl);
+
+    if (activeDrawerCard) {
+      setActiveTab('dashboard');
+    }
+  };
+
+  // Derived filtered leads: Canonical Store + Current Filter State = Derived UI
+  const derivedLeads = React.useMemo(() => {
+    return leads.filter((lead) => {
+      if (statusFilter && lead.status !== statusFilter) return false;
+      if (sourceFilter && lead.source_id !== sourceFilter) return false;
+      if (projectFilter && (!lead.project_interests || !lead.project_interests.includes(projectFilter))) return false;
+      if (assignFilter) {
+        if (assignFilter === 'unassigned') {
+          if (lead.assigned_to) return false;
+        } else if (lead.assigned_to !== assignFilter) {
+          return false;
+        }
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        const matchName = (lead.full_name || '').toLowerCase().includes(q);
+        const matchPhone = (lead.phone || '').includes(q);
+        const matchEmail = (lead.email || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchEmail) return false;
+      }
+      return true;
+    });
+  }, [leads, statusFilter, sourceFilter, projectFilter, assignFilter, search]);
 
   // Sync URL when selected active lead ID is changed
   useEffect(() => {
@@ -654,25 +723,83 @@ export default function LeadsScreen() {
     }
   };
 
-  // Submit bulk reassignment
-  const handleBulkReassign = async () => {
-    if (!bulkTargetUser) return;
-    const ok = await bulkReassignLeads(selectedLeadIds, bulkTargetUser);
-    if (ok) {
-      setSelectedLeadIds([]);
-      setIsOpenBulkSheet(false);
-      setBulkTargetUser('');
+  // Fetch ALL lead IDs matching active search and filters across the entire dataset
+  const handleSelectAllMatchingLeads = async () => {
+    setIsFetchingAllIds(true);
+    try {
+      const allIds = await fetchAllFilteredLeadIds({
+        search,
+        status: statusFilter,
+        source: sourceFilter,
+        project: projectFilter,
+        assignedTo: assignFilter,
+        budget_min: budgetMinFilter,
+        budget_max: budgetMaxFilter,
+        start_date: startDateFilter,
+        end_date: endDateFilter
+      });
+      setSelectedLeadIds(allIds);
+    } catch (err) {
+      console.error('Failed to fetch all matching lead IDs:', err);
+    } finally {
+      setIsFetchingAllIds(false);
     }
   };
 
-  // Submit bulk status
+  // Submit bulk reassignment or transfer to cold data
+  const handleExecuteBulkAssignment = async () => {
+    if (!bulkTargetUser || selectedLeadIds.length === 0) return;
+    setIsBulkExecuting(true);
+    try {
+      if (bulkTransferDestination === 'cold') {
+        const ok = await bulkTransferLeadsToCold(selectedLeadIds, bulkTargetUser);
+        if (ok) {
+          setSelectedLeadIds([]);
+          setIsOpenBulkSheet(false);
+          setBulkTargetUser('');
+        }
+      } else {
+        const ok = await bulkReassignLeads(selectedLeadIds, bulkTargetUser);
+        if (ok) {
+          setSelectedLeadIds([]);
+          setIsOpenBulkSheet(false);
+          setBulkTargetUser('');
+        }
+      }
+    } finally {
+      setIsBulkExecuting(false);
+    }
+  };
+
+  // Submit bulk status update
   const handleBulkStatusUpdate = async () => {
-    if (!bulkTargetStatus) return;
-    const ok = await bulkUpdateLeadsStatus(selectedLeadIds, bulkTargetStatus);
-    if (ok) {
-      setSelectedLeadIds([]);
-      setIsOpenBulkSheet(false);
-      setBulkTargetStatus('');
+    if (!bulkTargetStatus || selectedLeadIds.length === 0) return;
+    setIsBulkExecuting(true);
+    try {
+      const ok = await bulkUpdateLeadsStatus(selectedLeadIds, bulkTargetStatus);
+      if (ok) {
+        setSelectedLeadIds([]);
+        setIsOpenBulkSheet(false);
+        setBulkTargetStatus('');
+      }
+    } finally {
+      setIsBulkExecuting(false);
+    }
+  };
+
+  // Submit bulk deletion
+  const handleExecuteBulkDelete = async () => {
+    if (selectedLeadIds.length === 0) return;
+    setIsBulkExecuting(true);
+    try {
+      const ok = await bulkDeleteLeads(selectedLeadIds);
+      if (ok) {
+        setSelectedLeadIds([]);
+        setIsBulkDeleteDialogOpen(false);
+        setIsOpenBulkSheet(false);
+      }
+    } finally {
+      setIsBulkExecuting(false);
     }
   };
 
@@ -701,9 +828,11 @@ export default function LeadsScreen() {
 
   const handleAddQuickNote = async () => {
     if (!newQuickNote.trim() || !activeLeadId) return;
-    const ok = await updateLeadStatus(activeLeadId, activeLeadDetails?.lead.status || LeadStatus.NEW, newQuickNote);
-    if (ok) {
+    const res = await addLeadRemark(activeLeadId, newQuickNote.trim());
+    if (res.success) {
       setNewQuickNote('');
+    } else {
+      alert(res.error || 'Failed to save remark.');
     }
   };
 
@@ -747,14 +876,7 @@ export default function LeadsScreen() {
           <div className="space-y-5 animate-fade-in text-left">
             {/* Back button */}
             <button 
-              onClick={() => {
-                if (activeDrawerCard) {
-                  setActiveLeadId(null);
-                  setActiveTab('dashboard');
-                } else {
-                  setActiveLeadId(null);
-                }
-              }} 
+              onClick={handleBackToPipelineOrDashboard} 
               className="flex items-center space-x-1 text-xs font-bold text-[#0B1F33] bg-[#0B1F33]/5 hover:bg-[#0B1F33]/10 px-3 py-1.5 rounded-xl border border-[#0B1F33]/15 cursor-pointer max-w-fit"
             >
               <span>&larr; {activeDrawerCard ? 'Back to Dashboard Card' : 'Back to Leads Pipeline'}</span>
@@ -767,14 +889,7 @@ export default function LeadsScreen() {
           <div className="space-y-5 animate-fade-in text-left">
           {/* Back button */}
           <button 
-            onClick={() => {
-              if (activeDrawerCard) {
-                setActiveLeadId(null);
-                setActiveTab('dashboard');
-              } else {
-                setActiveLeadId(null);
-              }
-            }} 
+            onClick={handleBackToPipelineOrDashboard} 
             className="flex items-center space-x-1 text-xs font-bold text-[#0B1F33] bg-[#0B1F33]/5 hover:bg-[#0B1F33]/10 px-3 py-1.5 rounded-xl border border-[#0B1F33]/15 cursor-pointer max-w-fit"
           >
             <span>&larr; {activeDrawerCard ? 'Back to Dashboard Card' : 'Back to Leads Pipeline'}</span>
@@ -862,13 +977,11 @@ export default function LeadsScreen() {
                 </div>
               </div>
 
-              {/* Initial Summary Notes Card */}
-              <div className="rounded-[24px] bg-white border border-slate-200 p-6 space-y-3 shadow-sm text-xs text-left">
-                <h3 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display border-b border-slate-100 pb-2">Initial Summary Notes</h3>
-                <p className="text-slate-600 leading-normal italic">
-                  {getInitialNotes(activeLeadDetails.statusHistory) || 'No initial notes logged.'}
-                </p>
-              </div>
+              {/* Immutable Lead Remark History Card */}
+              <LeadRemarksCard
+                leadId={activeLeadDetails.lead.id}
+                remarks={activeLeadDetails.remarks || []}
+              />
 
               {/* Personnel Metadata */}
               <div className="rounded-[24px] bg-white border border-slate-200 p-6 space-y-3 shadow-sm text-xs">
@@ -909,7 +1022,7 @@ export default function LeadsScreen() {
                         carpet_area_min: parts[1] || '',
                         carpet_area_max: parts[2] || '',
                         assigned_to: activeLeadDetails.lead.assigned_to || '',
-                        initial_notes: getInitialNotes(activeLeadDetails.statusHistory)
+                        initial_notes: activeLeadDetails.lead.remarks || getInitialNotes(activeLeadDetails.statusHistory, activeLeadDetails.lead)
                       });
                       setEditingLeadRecordId(activeLeadDetails.lead.id);
                       setIsOpenCreateSheet(true);
@@ -1007,10 +1120,13 @@ export default function LeadsScreen() {
                       richNotes,
                       bookingAmount,
                       followupPayload,
-                      visitPayload
+                      visitPayload,
+                      notes.trim(),
+                      outcome
                     );
 
                     if (ok) {
+                      setStatusUpdateForm(prev => ({ ...prev, notes: '' }));
                       fetchLeadDetails(activeLeadId);
                     } else {
                       alert('Sync update failed.');
@@ -1203,40 +1319,62 @@ export default function LeadsScreen() {
               {/* Module 2-3 Columns for History Notes & Upcoming Appointments */}
               <div className="grid grid-cols-2 gap-5">
                 
-                {/* Notes & Chronology Timber Trail */}
+                {/* Remark History & Client Notes */}
                 <div className="bg-white rounded-3xl border border-slate-250 p-5 space-y-3 shadow-sm flex flex-col justify-between">
                   <div className="space-y-3 flex-1 text-left">
-                    <h4 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display border-b border-slate-100 pb-2">Conversation Note Trails</h4>
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <h4 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display">Remark History</h4>
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-mono">
+                        {(activeLeadDetails.remarks || []).length} {(activeLeadDetails.remarks || []).length === 1 ? 'remark' : 'remarks'}
+                      </span>
+                    </div>
+
                     <div className="flex space-x-1.5 pb-2">
                       <input
                         type="text"
-                        placeholder="Log custom client feedback..."
+                        placeholder="Log client remark or feedback..."
                         value={newQuickNote}
                         onChange={(e) => setNewQuickNote(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddQuickNote(); } }}
                         className="flex-1 h-9 px-3 text-xs rounded-lg bg-slate-50 border border-slate-200 text-primary-navy placeholder-slate-400 outline-none font-medium"
                       />
                       <button 
+                        type="button"
                         onClick={handleAddQuickNote}
                         className="w-9 h-9 flex items-center justify-center rounded-lg bg-primary-navy hover:bg-slate-800 text-white shadow font-bold cursor-pointer border-none shrink-0"
+                        title="Append Remark"
                       >
                         <Send className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     
-                    <div className="relative border-l border-slate-150 pl-5 ml-2.5 space-y-4 max-h-[30vh] overflow-y-auto custom-scroll pr-1">
-                      {activeLeadDetails.timeline.length === 0 ? (
-                        <div className="text-center py-6 text-slate-400 text-[11px]">No custom timelines found.</div>
+                    <div className="space-y-3 max-h-[30vh] overflow-y-auto custom-scroll pr-1">
+                      {(!activeLeadDetails.remarks || activeLeadDetails.remarks.length === 0) ? (
+                        <div className="text-center py-6 text-slate-400 text-[11px] italic">No remarks recorded yet.</div>
                       ) : (
-                        activeLeadDetails.timeline.map((event: any) => (
-                          <div key={event.id} className="relative text-xs">
-                            <span className="absolute -left-[24px] top-1 w-1.5 h-1.5 rounded-full bg-premium-gold" />
-                            <p className="font-bold text-primary-navy text-[11px] leading-tight">{event.title}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5 leading-normal">{event.description}</p>
-                            <span className="text-[9px] text-slate-400 font-mono block mt-0.5">
-                              {new Date(event.timestamp || event.created_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}
-                            </span>
-                          </div>
-                        ))
+                        [...activeLeadDetails.remarks]
+                          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                          .map((r: any) => (
+                            <div key={r.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-left text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded uppercase tracking-wider font-display">
+                                  Remark Added
+                                </span>
+                                {r.status_at_creation && (
+                                  <span className="text-[8.5px] text-slate-500 bg-white border border-slate-200 px-1.5 py-0.2 rounded font-medium">
+                                    {r.status_at_creation}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-800 font-normal leading-relaxed whitespace-pre-wrap break-words">
+                                {r.remark_text}
+                              </p>
+                              <div className="flex items-center justify-between text-[9.5px] text-slate-400 pt-1 border-t border-slate-200/60 font-mono">
+                                <span>{new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} • {new Date(r.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                                <span className="font-semibold text-primary-navy">By: {r.created_by_name || 'Agent'}</span>
+                              </div>
+                            </div>
+                          ))
                       )}
                     </div>
                   </div>
@@ -1428,13 +1566,12 @@ export default function LeadsScreen() {
                 </div>
               </div>
 
-              {/* Initial Summary Notes Card (Mobile) */}
-              <div className="rounded-[24px] bg-white border border-slate-200 p-5 space-y-2 text-left text-xs">
-                <h3 className="text-xs font-bold text-premium-gold uppercase tracking-wider font-display">Initial Summary Notes</h3>
-                <p className="text-slate-600 leading-normal italic">
-                  {getInitialNotes(activeLeadDetails.statusHistory) || 'No initial notes logged.'}
-                </p>
-              </div>
+              {/* Immutable Lead Remark History Card (Mobile) */}
+              <LeadRemarksCard
+                leadId={activeLeadDetails.lead.id}
+                remarks={activeLeadDetails.remarks || []}
+                compact
+              />
 
               {/* CRM Records Actions (Phase 4 Leads Actions) */}
               <div className="rounded-[24px] bg-white border border-slate-200 p-5 space-y-3 shadow-sm text-xs">
@@ -1458,7 +1595,7 @@ export default function LeadsScreen() {
                         carpet_area_min: parts[1] || '',
                         carpet_area_max: parts[2] || '',
                         assigned_to: activeLeadDetails.lead.assigned_to || '',
-                        initial_notes: getInitialNotes(activeLeadDetails.statusHistory)
+                        initial_notes: activeLeadDetails.lead.remarks || getInitialNotes(activeLeadDetails.statusHistory, activeLeadDetails.lead)
                       });
                       setEditingLeadRecordId(activeLeadDetails.lead.id);
                       setIsOpenCreateSheet(true);
@@ -1512,25 +1649,42 @@ export default function LeadsScreen() {
                 </div>
               </div>
 
-              {/* Chronological timelines */}
+              {/* Pure Immutable Lead Remark History */}
               <div className="rounded-[24px] neu-flat bg-white p-5 border border-border-color space-y-3">
-                <h4 className="text-xs font-bold text-[#0B1F33] uppercase tracking-wider font-display">Notes & Audit Trails</h4>
-                <div className="relative border-l border-border-color/60 pl-6 ml-3 space-y-5 max-h-[35vh] overflow-y-auto custom-scroll pb-2">
-                  {activeLeadDetails.timeline.length === 0 ? (
-                    <EmptyState title="No Note Logs" description="Start typing in the box above to record a new conversation summary." icon={MessageSquare} />
+                <div className="flex items-center justify-between border-b border-border-color/60 pb-2">
+                  <h4 className="text-xs font-bold text-[#0B1F33] uppercase tracking-wider font-display">Lead Remark History</h4>
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-mono">
+                    {(activeLeadDetails.remarks || []).length} {(activeLeadDetails.remarks || []).length === 1 ? 'remark' : 'remarks'}
+                  </span>
+                </div>
+
+                <div className="space-y-3 max-h-[35vh] overflow-y-auto custom-scroll pb-2">
+                  {(!activeLeadDetails.remarks || activeLeadDetails.remarks.length === 0) ? (
+                    <EmptyState title="No Remarks Logged" description="Start typing in the box above to record a new immutable remark." icon={MessageSquare} />
                   ) : (
-                    activeLeadDetails.timeline.map((event: any) => (
-                      <div key={event.id} className="relative animate-fade-in text-xs">
-                        <span className="absolute -left-[30px] top-1 w-2 h-2 rounded-full bg-premium-gold border border-white" />
-                        <div className="space-y-0.5">
-                          <p className="font-semibold text-[#0B1F33] text-[11px] leading-tight">{event.title}</p>
-                          <p className="text-[10px] text-text-secondary leading-normal">{event.description}</p>
-                          <span className="text-[9px] text-slate-400 font-mono block mt-0.5">
-                            {new Date(event.timestamp || event.created_at || Date.now()).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}
-                          </span>
+                    [...activeLeadDetails.remarks]
+                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                      .map((remark: any) => (
+                        <div key={remark.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5 text-left text-xs animate-fade-in">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md uppercase tracking-wider font-display">
+                              Remark Added
+                            </span>
+                            {remark.status_at_creation && (
+                              <span className="text-[9px] text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md font-medium">
+                                Status: {remark.status_at_creation}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-800 leading-relaxed font-normal whitespace-pre-wrap break-words">
+                            {remark.remark_text}
+                          </p>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-200/70 font-mono">
+                            <span>{new Date(remark.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} • {new Date(remark.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                            <span className="font-semibold text-primary-navy">By: {remark.created_by_name || 'Agent'}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      ))
                   )}
                 </div>
               </div>
@@ -1696,7 +1850,9 @@ export default function LeadsScreen() {
                     richNotes,
                     bookingAmount,
                     followupPayload,
-                    visitPayload
+                    visitPayload,
+                    notes.trim(),
+                    outcome
                   );
 
                   if (ok) {
@@ -1808,11 +1964,11 @@ export default function LeadsScreen() {
 
                 {/* Transition Notes (Mandatory) */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Remarks / Conversation summary *</label>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Status Transition Remark / Audit Reason *</label>
                   <textarea
                     value={statusUpdateForm.notes}
                     onChange={(e) => setStatusUpdateForm({ ...statusUpdateForm, notes: e.target.value })}
-                    placeholder="Provide professional outcome audit trail text (required)..."
+                    placeholder="Provide specific reason/context for this status transition..."
                     className="w-full p-3 h-20 text-xs text-primary-navy font-medium placeholder-slate-400 border border-border-color bg-input-bg rounded-xl outline-none"
                     required
                     id="unified-status-notes"
@@ -2082,6 +2238,7 @@ export default function LeadsScreen() {
                   className="w-full h-10 px-3 bg-slate-50 border border-slate-205 text-[#0B1F33] rounded-xl font-bold text-[11px] focus:outline-none"
                 >
                   <option value="">All Personnel</option>
+                  <option value="unassigned">⚠️ Unassigned (Awaiting Allocation)</option>
                   {allUsers.map(u => (
                     <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
                   ))}
@@ -2089,21 +2246,57 @@ export default function LeadsScreen() {
               </div>
             </div>
 
-            {/* Permanent Bulk Action Drawer on Desktop whenever leads are checked */}
+            {/* Permanent Bulk Action Banner & Drawer on Desktop whenever leads are checked */}
             {selectedLeadIds.length > 0 && activeUser && [UserRole.COMPANY_ADMIN].includes(activeUser.role) && (
-              <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between text-xs animate-fade-in shadow-inner">
-                <div className="flex items-center space-x-2">
-                  <span className="font-bold text-primary-navy bg-[#0B1F33]/5 px-2.5 py-1 rounded-full">{selectedLeadIds.length}</span>
-                  <span className="text-slate-500 font-medium">Lead records checked for bulk action</span>
+              <div className="mt-3 p-4 bg-amber-50/80 border border-amber-200/80 rounded-2xl flex flex-col md:flex-row items-center justify-between text-xs animate-fade-in gap-3 shadow-sm">
+                <div className="flex items-center space-x-2 text-slate-800">
+                  <span className="font-bold text-[#0B1F33] bg-white border border-amber-200 px-3 py-1 rounded-full text-xs shadow-xs">
+                    {selectedLeadIds.length} Checked
+                  </span>
+                  <span className="font-semibold text-slate-700">
+                    {selectedLeadIds.length >= leadsTotalCount && leadsTotalCount > 0 ? (
+                      <span className="text-amber-900 font-bold">All {selectedLeadIds.length} matching lead records in dataset are selected.</span>
+                    ) : (
+                      <>
+                        <span>Lead record(s) checked.</span>
+                        {leadsTotalCount > selectedLeadIds.length && (
+                          <span className="text-slate-500 ml-1 font-normal">(Total matching current view: {leadsTotalCount})</span>
+                        )}
+                      </>
+                    )}
+                  </span>
                 </div>
-                
-                <div className="flex items-center gap-3">
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {selectedLeadIds.length < leadsTotalCount && leadsTotalCount > 0 && (
+                    <button
+                      onClick={handleSelectAllMatchingLeads}
+                      disabled={isFetchingAllIds}
+                      className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer shadow-xs flex items-center space-x-1"
+                    >
+                      {isFetchingAllIds ? (
+                        <span>Fetching all {leadsTotalCount} IDs...</span>
+                      ) : (
+                        <span>Select all {leadsTotalCount} leads</span>
+                      )}
+                    </button>
+                  )}
+
                   <button
                     onClick={() => setIsOpenBulkSheet(true)}
-                    className="px-4 py-2 bg-[#0B1F33] hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border-none cursor-pointer"
+                    className="px-4 py-2 bg-[#0B1F33] hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border-none cursor-pointer shadow-xs"
                   >
-                    Apply Bulk Updates & Re-assign
+                    Apply Bulk Updates & Transfer
                   </button>
+
+                  <button
+                    onClick={() => setIsBulkDeleteDialogOpen(true)}
+                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border-none cursor-pointer shadow-xs flex items-center space-x-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Selected</span>
+                  </button>
+
                   {activeUser && [UserRole.TEAM_LEADER, UserRole.COMPANY_ADMIN].includes(activeUser.role) && (
                     <button
                       onClick={handleBulkExportCSV}
@@ -2114,9 +2307,10 @@ export default function LeadsScreen() {
                       <span>Export CSV</span>
                     </button>
                   )}
+
                   <button
                     onClick={() => setSelectedLeadIds([])}
-                    className="p-2 hover:bg-red-50 text-red-500 rounded-xl font-bold text-[10px]"
+                    className="p-2 hover:bg-red-50 text-red-500 rounded-xl font-bold text-[10px] cursor-pointer"
                   >
                     Clear Checks
                   </button>
@@ -2134,10 +2328,15 @@ export default function LeadsScreen() {
                     <th scope="col" className="p-4 w-12 text-center">
                       <input
                         type="checkbox"
-                        checked={leads.length > 0 && selectedLeadIds.length === leads.length}
+                        checked={
+                          derivedLeads.length > 0 &&
+                          (selectedLeadIds.length === leadsTotalCount ||
+                            derivedLeads.every(l => selectedLeadIds.includes(l.id)))
+                        }
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setSelectedLeadIds(leads.map(lead => lead.id));
+                            const pageIds = derivedLeads.map(lead => lead.id);
+                            setSelectedLeadIds(prev => Array.from(new Set([...prev, ...pageIds])));
                           } else {
                             setSelectedLeadIds([]);
                           }
@@ -2156,14 +2355,14 @@ export default function LeadsScreen() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-slate-100 font-medium text-slate-600">
-                {leads.length === 0 ? (
+                {derivedLeads.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-slate-400 font-bold">
                       No matching leads found.
                     </td>
                   </tr>
                 ) : (
-                  leads.map((lead) => {
+                  derivedLeads.map((lead) => {
                     const isCompanyAdmin = activeUser && [UserRole.COMPANY_ADMIN].includes(activeUser.role);
                     const isChecked = isCompanyAdmin && selectedLeadIds.includes(lead.id);
                     const assigneeName = allUsers.find(u => u.id === lead.assigned_to)?.full_name || 'Unassigned';
@@ -2226,7 +2425,13 @@ export default function LeadsScreen() {
                           </span>
                         </td>
                         <td className="p-4 py-3.5 font-bold text-primary-navy">
-                          {assigneeName}
+                          {lead.assigned_to ? (
+                            <span>{assigneeName}</span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              Unassigned (Awaiting Admin)
+                            </span>
+                          )}
                         </td>
                         <td className="p-4 py-3.5 pr-6 text-right">
                           <div className="flex justify-end gap-2.5">
@@ -2357,10 +2562,10 @@ export default function LeadsScreen() {
 
           {/* Real paginated listing block - Mobile */}
           <div className="space-y-3 pb-8 xl:hidden">
-            {leads.length === 0 ? (
+            {derivedLeads.length === 0 ? (
               <EmptyState title="No Leads Found" description="Try editing filters or add a new qualified lead." onAction={() => setIsOpenCreateSheet(true)} actionText="Create Lead" />
             ) : (
-              leads.map((lead) => {
+              derivedLeads.map((lead) => {
                 const isCompanyAdmin = activeUser && [UserRole.COMPANY_ADMIN].includes(activeUser.role);
                 const isChecked = isCompanyAdmin && selectedLeadIds.includes(lead.id);
                 return (
@@ -2389,16 +2594,23 @@ export default function LeadsScreen() {
                       >
                         <h4 className="text-xs font-bold text-primary-navy font-display">{lead.full_name}</h4>
                         <p className="text-[10px] text-text-secondary mt-0.5 leading-none">{lead.phone} • Info Source: {getSourceName(lead.source_id)}</p>
-                        <span className="text-[9px] text-premium-gold uppercase font-semibold font-display block mt-1">
-                          Config: {(lead.bedroom_preference || '').split('|')[0] || 'Unstated'}
-                          {(() => {
-                            const parts = (lead.bedroom_preference || '').split('|');
-                            if (parts[1] || parts[2]) {
-                              return ` (${parts[1] || '0'}-${parts[2] || 'Any'} sqft)`;
-                            }
-                            return '';
-                          })()}
-                        </span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span className="text-[9px] text-premium-gold uppercase font-semibold font-display">
+                            Config: {(lead.bedroom_preference || '').split('|')[0] || 'Unstated'}
+                            {(() => {
+                              const parts = (lead.bedroom_preference || '').split('|');
+                              if (parts[1] || parts[2]) {
+                                return ` (${parts[1] || '0'}-${parts[2] || 'Any'} sqft)`;
+                              }
+                              return '';
+                            })()}
+                          </span>
+                          {!lead.assigned_to && (
+                            <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                              Unassigned
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -2630,11 +2842,11 @@ export default function LeadsScreen() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Initial Summary Notes</label>
+            <label className="text-[10px] font-bold text-primary-navy uppercase tracking-wider block">Lead Remarks / Summary Notes</label>
             <textarea
               value={formData.initial_notes}
               onChange={(e) => setFormData({ ...formData, initial_notes: e.target.value })}
-              placeholder="Record any introductory requests or customer details here..."
+              placeholder="Record any client preferences, introductory requests, or background details..."
               className="w-full p-3 h-20 neu-inset text-xs rounded-xl bg-input-bg border-border-color focus:outline-none"
             />
           </div>
@@ -2706,6 +2918,7 @@ export default function LeadsScreen() {
               className="w-full h-11 px-3 border border-border-color bg-input-bg rounded-xl font-semibold text-primary-navy"
             >
               <option value="">All Company Personnel</option>
+              <option value="unassigned">⚠️ Unassigned (Awaiting Allocation)</option>
               {allUsers.map(u => (
                 <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
               ))}
@@ -2780,38 +2993,96 @@ export default function LeadsScreen() {
         title="Core Bulk Operations"
       >
         <div className="space-y-5 text-xs text-left pb-12">
-          <p className="text-[11px] text-text-secondary leading-normal bg-slate-50 border p-3 rounded-2xl">
-            You are currently administering <strong className="text-primary-navy">{selectedLeadIds.length}</strong> checked lead profile(s). Choose one bulk module below to execute:
+          <p className="text-[11px] text-text-secondary leading-normal bg-slate-50 border p-3 rounded-2xl flex items-center justify-between">
+            <span>Administering selected lead profile(s):</span>
+            <strong className="text-primary-navy bg-slate-200 px-3 py-1 rounded-full">{selectedLeadIds.length} Checked</strong>
           </p>
 
-          {/* Module A: Reassignments */}
+          {/* Module A: Reassignments & Cold Data Transfer */}
           {activeUser && [UserRole.TEAM_LEADER, UserRole.COMPANY_ADMIN].includes(activeUser.role) && (
-            <div className="p-4 bg-white border border-border-color rounded-3xl space-y-2.5 shadow-sm">
+            <div className="p-4 bg-white border border-border-color rounded-3xl space-y-3 shadow-sm">
               <h4 className="text-[10px] font-bold text-premium-gold uppercase tracking-wider flex items-center space-x-1.5">
-                <Users className="w-4 h-4" />
-                <span>Bulk Lead Reassignment</span>
+                <Users className="w-4 h-4 text-amber-600" />
+                <span>Bulk Reassignment & Data Transfer</span>
               </h4>
-              <label className="text-[10.5px] text-text-secondary">Select Target Personnel Employee:</label>
-              <div className="flex space-x-2">
+
+              <div className="space-y-1">
+                <label className="text-[10.5px] text-text-secondary font-medium">Select Target Employee:</label>
                 <select
                   value={bulkTargetUser}
                   onChange={(e) => setBulkTargetUser(e.target.value)}
-                  className="flex-1 h-11 px-3 border border-border-color bg-input-bg rounded-xl text-xs font-semibold"
+                  className="w-full h-11 px-3 border border-border-color bg-input-bg rounded-xl text-xs font-semibold"
                 >
                   <option value="">Choose Employee...</option>
                   {allUsers.map(u => (
                     <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
                   ))}
                 </select>
-                <button
-                  onClick={handleBulkReassign}
-                  disabled={!bulkTargetUser}
-                  className="h-11 px-4 bg-primary-navy text-white text-xs font-bold rounded-xl active:scale-95 disabled:opacity-50"
-                  id="bulk-reassign-confirm"
-                >
-                  Reassign
-                </button>
               </div>
+
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[10.5px] text-text-secondary font-medium block">Transfer Destination:</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label
+                    onClick={() => setBulkTransferDestination('leads')}
+                    className={`p-3 border rounded-xl flex items-center space-x-2.5 cursor-pointer transition-all ${
+                      bulkTransferDestination === 'leads'
+                        ? 'border-[#0B1F33] bg-[#0B1F33]/5 text-[#0B1F33] font-bold'
+                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="transferDest"
+                      checked={bulkTransferDestination === 'leads'}
+                      onChange={() => setBulkTransferDestination('leads')}
+                      className="w-4 h-4 text-[#0B1F33]"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-[11px]">Leads Tab</span>
+                      <span className="text-[9.5px] text-slate-400 font-normal">Active Leads Pipeline</span>
+                    </div>
+                  </label>
+
+                  <label
+                    onClick={() => setBulkTransferDestination('cold')}
+                    className={`p-3 border rounded-xl flex items-center space-x-2.5 cursor-pointer transition-all ${
+                      bulkTransferDestination === 'cold'
+                        ? 'border-amber-600 bg-amber-50/60 text-amber-900 font-bold'
+                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="transferDest"
+                      checked={bulkTransferDestination === 'cold'}
+                      onChange={() => setBulkTransferDestination('cold')}
+                      className="w-4 h-4 text-amber-600"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-[11px]">Cold Calling Data</span>
+                      <span className="text-[9.5px] text-slate-400 font-normal">Cold Data assigned to user</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <button
+                onClick={handleExecuteBulkAssignment}
+                disabled={!bulkTargetUser || isBulkExecuting}
+                className="w-full h-11 bg-primary-navy hover:bg-slate-800 text-white text-xs font-bold rounded-xl active:scale-95 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                id="bulk-reassign-confirm"
+              >
+                {isBulkExecuting ? (
+                  <span>Processing...</span>
+                ) : (
+                  <span>
+                    {bulkTransferDestination === 'cold'
+                      ? `Transfer ${selectedLeadIds.length} Lead(s) to Cold Data of Selected User`
+                      : `Assign ${selectedLeadIds.length} Lead(s) to Selected User`}
+                  </span>
+                )}
+              </button>
             </div>
           )}
 
@@ -2835,16 +3106,77 @@ export default function LeadsScreen() {
               </select>
               <button
                 onClick={handleBulkStatusUpdate}
-                disabled={!bulkTargetStatus}
-                className="h-11 px-4 bg-primary-navy text-white text-xs font-bold rounded-xl active:scale-95 disabled:opacity-50"
+                disabled={!bulkTargetStatus || isBulkExecuting}
+                className="h-11 px-4 bg-primary-navy text-white text-xs font-bold rounded-xl active:scale-95 disabled:opacity-50 cursor-pointer"
                 id="bulk-status-confirm"
               >
                 Update Status
               </button>
             </div>
           </div>
+
+          {/* Module C: Bulk Delete */}
+          {activeUser && [UserRole.COMPANY_ADMIN, UserRole.TEAM_LEADER].includes(activeUser.role) && (
+            <div className="p-4 bg-red-50/50 border border-red-200 rounded-3xl space-y-2.5 shadow-sm">
+              <h4 className="text-[10px] font-bold text-red-600 uppercase tracking-wider flex items-center space-x-1.5">
+                <Trash2 className="w-4 h-4 text-red-600" />
+                <span>Bulk Lead Deletion</span>
+              </h4>
+              <p className="text-[10.5px] text-slate-600">
+                Permanently delete <strong className="text-red-700">{selectedLeadIds.length}</strong> selected lead records and their history.
+              </p>
+              <button
+                onClick={() => setIsBulkDeleteDialogOpen(true)}
+                disabled={isBulkExecuting}
+                className="w-full h-11 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl active:scale-95 disabled:opacity-50 transition-all cursor-pointer flex items-center justify-center space-x-2 shadow-xs"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete {selectedLeadIds.length} Selected Leads</span>
+              </button>
+            </div>
+          )}
         </div>
       </BottomDrawer>
+
+      {/* Bulk Delete Confirmation Modal */}
+      {isBulkDeleteDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-bold text-slate-900">Confirm Bulk Deletion</h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Are you sure you want to permanently delete <strong className="text-red-600">{selectedLeadIds.length} lead record(s)</strong>?
+                All associated status logs, followups, and site visits will be removed.
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setIsBulkDeleteDialogOpen(false)}
+                disabled={isBulkExecuting}
+                className="flex-1 h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteBulkDelete}
+                disabled={isBulkExecuting}
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm flex items-center justify-center space-x-1"
+              >
+                {isBulkExecuting ? (
+                  <span>Deleting...</span>
+                ) : (
+                  <span>Yes, Delete All</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 6. MODAL DRAWER: ARRANGE CALLBACK (Follow-up scheduler) */}
       <BottomDrawer
