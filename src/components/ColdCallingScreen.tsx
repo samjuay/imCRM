@@ -88,6 +88,8 @@ export default function ColdCallingScreen() {
   const [updatingRecordId, setUpdatingRecordId] = useState<string | null>(null);
   const [newStatus, setNewStatus] = useState('');
   const [outcomeNotes, setOutcomeNotes] = useState('');
+  const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
+  const [statusAttemptKey, setStatusAttemptKey] = useState<string>('');
 
   useEffect(() => {
     fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
@@ -167,16 +169,22 @@ export default function ColdCallingScreen() {
     }
   };
 
-  // Submits a single status outcome callback notes update
+  // Submits a single status outcome callback notes update with deduplication key
   const handleUpdateStatusSubmit = async () => {
-    if (!updatingRecordId || !newStatus) return;
-    const ok = await updateColdStatus(updatingRecordId, newStatus, outcomeNotes);
-    if (ok) {
-      setUpdatingRecordId(null);
-      setNewStatus('');
-      setOutcomeNotes('');
-      fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
-      showToast("Call state updated successfully.");
+    if (!updatingRecordId || !newStatus || isSubmittingStatus) return;
+    setIsSubmittingStatus(true);
+    try {
+      const ok = await updateColdStatus(updatingRecordId, newStatus, outcomeNotes, statusAttemptKey);
+      if (ok) {
+        setUpdatingRecordId(null);
+        setNewStatus('');
+        setOutcomeNotes('');
+        setStatusAttemptKey('');
+        fetchColdData({ search, status: statusFilter, sourceId: sourceFilter, assignedTo: assignedSeFilter });
+        showToast("Call state updated successfully.");
+      }
+    } finally {
+      setIsSubmittingStatus(false);
     }
   };
 
@@ -555,16 +563,23 @@ export default function ColdCallingScreen() {
                         </div>
                         <div className="flex justify-end space-x-2 pt-1">
                           <button
-                            onClick={() => setUpdatingRecordId(null)}
-                            className="px-3 py-1.5 text-[10px] font-bold uppercase text-text-secondary"
+                            disabled={isSubmittingStatus}
+                            onClick={() => {
+                              setUpdatingRecordId(null);
+                              setStatusAttemptKey('');
+                            }}
+                            className="px-3 py-1.5 text-[10px] font-bold uppercase text-text-secondary disabled:opacity-50"
                           >
                             Cancel
                           </button>
                           <button
+                            disabled={isSubmittingStatus}
                             onClick={handleUpdateStatusSubmit}
-                            className="px-3.5 py-1.5 bg-primary-navy text-white text-[10px] font-bold uppercase rounded-lg shadow-sm"
+                            className={`px-3.5 py-1.5 bg-primary-navy text-white text-[10px] font-bold uppercase rounded-lg shadow-sm transition-opacity ${
+                              isSubmittingStatus ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary-navy/90'
+                            }`}
                           >
-                            Save Status Call
+                            {isSubmittingStatus ? 'Saving...' : 'Save Status Call'}
                           </button>
                         </div>
                       </div>
@@ -586,6 +601,7 @@ export default function ColdCallingScreen() {
                             onClick={() => {
                               setUpdatingRecordId(rec.id);
                               setNewStatus(rec.status);
+                              setStatusAttemptKey(`cca_${rec.id}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
                             }}
                             className="neu-button px-3.5 text-[10px] uppercase font-semibold text-text-secondary flex items-center space-x-1"
                           >

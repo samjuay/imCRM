@@ -44,6 +44,33 @@ if (!supabaseUrl || !supabaseAnonKey) {
   process.exit(1);
 }
 
+// In-memory request deduplication cache to prevent concurrent double-clicks or rapid network retries
+const processedColdCallIdempotencyKeys = new Map<string, number>();
+function checkAndRecordColdCallIdempotency(key: string): boolean {
+  const now = Date.now();
+  for (const [k, ts] of processedColdCallIdempotencyKeys.entries()) {
+    if (now - ts > 300000) processedColdCallIdempotencyKeys.delete(k); // 5 min TTL
+  }
+  if (processedColdCallIdempotencyKeys.has(key)) {
+    return false; // Duplicate
+  }
+  processedColdCallIdempotencyKeys.set(key, now);
+  return true;
+}
+
+const processedLeadUpdateIdempotencyKeys = new Map<string, number>();
+function checkAndRecordLeadUpdateIdempotency(key: string): boolean {
+  const now = Date.now();
+  for (const [k, ts] of processedLeadUpdateIdempotencyKeys.entries()) {
+    if (now - ts > 300000) processedLeadUpdateIdempotencyKeys.delete(k); // 5 min TTL
+  }
+  if (processedLeadUpdateIdempotencyKeys.has(key)) {
+    return false; // Duplicate
+  }
+  processedLeadUpdateIdempotencyKeys.set(key, now);
+  return true;
+}
+
 // Resilient on-the-fly database seeding and user provisioning bootstrapping mechanism
 async function bootstrapDatabase() {
   console.log('[DB Bootstrap] Running seeding & cleanup...');
@@ -621,9 +648,18 @@ async function startServer() {
   });
 
   app.get('/api/auth/me', async (req, res) => {
-    const token = req.query.token as string || req.headers.authorization;
-    if (!token) {
+    let token = (req.query.token as string || req.headers.authorization || '').trim();
+    if (token.toLowerCase().startsWith('bearer ')) {
+      token = token.slice(7).trim();
+    }
+
+    if (!token || token === 'undefined' || token === 'null') {
       return res.status(401).json({ error: 'Unauthorized. No session token. Please log in.' });
+    }
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
+    if (!isUuid) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid session token format.' });
     }
 
     try {
@@ -1515,11 +1551,17 @@ async function startServer() {
 
   app.post('/api/leads/:id/status-update', async (req, res) => {
     const { id } = req.params;
-    const { new_status, notes, remark, outcome, user_id, booking_amount, followup, site_visit } = req.body;
+    const { new_status, notes, remark, outcome, user_id, booking_amount, followup, site_visit, idempotency_key } = req.body;
     const finalRemark = remark || notes;
 
     if (!new_status || !user_id || !finalRemark) {
       return res.status(400).json({ error: 'Missing required status fields.' });
+    }
+
+    const key = idempotency_key || req.headers['x-idempotency-key'] as string;
+    if (key && !checkAndRecordLeadUpdateIdempotency(key)) {
+      console.log(`[Idempotency] Duplicate lead status update skipped for key: ${key}`);
+      return res.json({ success: true, deduplicated: true });
     }
 
     try {
@@ -2435,15 +2477,55 @@ async function startServer() {
 
   app.put('/api/cold-data/:id/status', async (req, res) => {
     const { id } = req.params;
-    const { status, notes } = req.body;
+    const { status, notes, user_id, idempotency_key } = req.body;
+
+    // Fast-path in-memory idempotency check to suppress duplicate in-flight or double-click requests
+    if (idempotency_key && !checkAndRecordColdCallIdempotency(idempotency_key)) {
+      console.log(`[Idempotency] Duplicate cold call status request skipped for key: ${idempotency_key}`);
+      return res.json({ success: true, deduplicated: true });
+    }
+
     try {
       const supabase = getSupabase();
-      const { data: record } = await supabase.from('cold_data').select('notes').eq('id', id).single();
+      const { data: record } = await supabase.from('cold_data').select('*').eq('id', id).single();
       let updatedNotes = record?.notes || '';
       if (notes) updatedNotes = updatedNotes ? `${updatedNotes}\n---\nUpdate: ${notes}` : notes;
 
       const { data, error } = await supabase.from('cold_data').update({ status, notes: updatedNotes, updated_at: new Date().toISOString() }).eq('id', id).select().single();
       if (error) throw error;
+
+      // Log immutable activity to cold_call_activities with idempotency key
+      try {
+        const effectiveUserId = user_id || record?.assigned_to || null;
+        const key = idempotency_key || `call_${id}_${Date.now()}`;
+        const { error: insErr } = await supabase.from('cold_call_activities').insert([{
+          id: crypto.randomUUID(),
+          cold_data_id: id,
+          company_id: record?.company_id || '99999999-9999-9999-9999-999999999999',
+          user_id: effectiveUserId,
+          call_outcome: status,
+          notes: notes || '',
+          idempotency_key: key,
+          created_at: new Date().toISOString()
+        }]);
+
+        if (insErr) {
+          // If 23505 (unique constraint violation on idempotency_key), gracefully handle as already recorded
+          if (insErr.code === '23505' || insErr.message?.includes('duplicate key') || insErr.message?.includes('violates unique constraint')) {
+            console.log(`[Idempotency] Duplicate cold call activity prevented in DB for key: ${key}`);
+          } else {
+            console.warn('[Cold Call Activities log notice]:', insErr.message || insErr);
+          }
+        }
+      } catch (ccaErr: any) {
+        if (ccaErr?.code === '23505' || ccaErr?.message?.includes('duplicate key')) {
+          console.log(`[Idempotency] Caught duplicate error for key: ${idempotency_key}`);
+        } else {
+          // Table may not have been migrated yet in Supabase SQL editor
+          console.warn('[Cold Call Activities log notice]:', ccaErr?.message || ccaErr);
+        }
+      }
+
       res.json({ success: true, record: data });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2481,11 +2563,33 @@ async function startServer() {
 
       const { error: statusErr } = await supabase.from('lead_status_updates').insert([{
         id: crypto.randomUUID(), lead_id: leadId, company_id: record.company_id, user_id: user_id || '11111111-1111-1111-1111-111111111111',
-        previous_status: LeadStatus.NEW, new_status: LeadStatus.NEW, remark: notes || 'Converted call database logging', created_at: new Date().toISOString()
+        previous_status: LeadStatus.NEW, new_status: LeadStatus.NEW, remark: notes ? `Converted call database logging: ${notes}` : 'Converted call database logging', created_at: new Date().toISOString()
       }]);
       if (statusErr) throw statusErr;
 
-      await supabase.from('cold_data').update({ converted_lead_id: leadId, status: ColdStatus.CONVERTED_TO_LEAD }).eq('id', id);
+      await supabase.from('cold_data').update({ converted_lead_id: leadId, status: ColdStatus.CONVERTED_TO_LEAD, updated_at: new Date().toISOString() }).eq('id', id);
+
+      // Log immutable activity to cold_call_activities with unique conversion key
+      try {
+        const convKey = `conv_${id}`;
+        const { error: convErr } = await supabase.from('cold_call_activities').insert([{
+          id: crypto.randomUUID(),
+          cold_data_id: id,
+          company_id: record.company_id,
+          user_id: user_id || record.assigned_to || null,
+          call_outcome: ColdStatus.CONVERTED_TO_LEAD,
+          notes: notes || 'Converted cold contact to lead',
+          idempotency_key: convKey,
+          created_at: new Date().toISOString()
+        }]);
+        if (convErr && convErr.code !== '23505') {
+          console.warn('[Cold Call Activities conversion log notice]:', convErr.message || convErr);
+        }
+      } catch (ccaErr: any) {
+        if (ccaErr?.code !== '23505') {
+          console.warn('[Cold Call Activities log notice]:', ccaErr?.message || ccaErr);
+        }
+      }
 
       // --- LOG ACTIVITIES TO ENGINE ---
       const creatorId = user_id || '11111111-1111-1111-1111-111111111111';
@@ -3209,241 +3313,536 @@ async function startServer() {
   });
 
 
-  // --- 6. REPORTING DASHBOARD ENDPOINT ---
-  app.get('/api/reports', async (req, res) => {
-    const companyId = req.query.companyId as string || '99999999-9999-9999-9999-999999999999';
-    const filterUserId = req.query.userId as string || undefined;
-    const filterProjectId = req.query.projectId as string || undefined;
-    const preset = req.query.preset as string || 'today';
+  // Helper functions for Asia/Kolkata timezone interval calculation
+  function getKolkataDateParts(d = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric'
+    }).formatToParts(d);
+    const map: Record<string, string> = {};
+    parts.forEach(p => map[p.type] = p.value);
+    return {
+      year: parseInt(map.year, 10),
+      month: parseInt(map.month, 10),
+      day: parseInt(map.day, 10)
+    };
+  }
 
-    const today = new Date();
-    let startStr = today.toISOString().split('T')[0];
-    let endStr = startStr;
+  function padZero(n: number) { return n < 10 ? '0' + n : '' + n; }
 
-    if (preset === 'yesterday') {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      startStr = yesterday.toISOString().split('T')[0];
-      endStr = startStr;
+  function getKolkataInterval(preset: string, customStart?: string, customEnd?: string) {
+    const todayParts = getKolkataDateParts();
+    const todayStr = `${todayParts.year}-${padZero(todayParts.month)}-${padZero(todayParts.day)}`;
+
+    let startCal = todayStr;
+    let endCal = todayStr;
+
+    if (preset === 'today') {
+      startCal = todayStr;
+      endCal = todayStr;
+    } else if (preset === 'yesterday') {
+      const yDate = new Date(`${todayStr}T12:00:00+05:30`);
+      yDate.setDate(yDate.getDate() - 1);
+      const yParts = getKolkataDateParts(yDate);
+      const yStr = `${yParts.year}-${padZero(yParts.month)}-${padZero(yParts.day)}`;
+      startCal = yStr;
+      endCal = yStr;
     } else if (preset === 'this_week') {
-      const distance = today.getDay() === 0 ? -6 : 1 - today.getDay();
-      const monday = new Date(today.setDate(today.getDate() + distance));
-      const sunday = new Date(monday.setDate(monday.getDate() + 6));
-      startStr = monday.toISOString().split('T')[0];
-      endStr = sunday.toISOString().split('T')[0];
+      const d = new Date(`${todayStr}T12:00:00+05:30`);
+      const dayOfWeek = d.getDay();
+      const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      d.setDate(d.getDate() - diffToMonday);
+      const mParts = getKolkataDateParts(d);
+      startCal = `${mParts.year}-${padZero(mParts.month)}-${padZero(mParts.day)}`;
+      endCal = todayStr;
     } else if (preset === 'this_month') {
-      startStr = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-      endStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+      startCal = `${todayParts.year}-${padZero(todayParts.month)}-01`;
+      endCal = todayStr;
     } else if (preset === 'custom') {
-      startStr = (req.query.start as string) || startStr;
-      endStr = (req.query.end as string) || endStr;
+      let s = customStart || todayStr;
+      let e = customEnd || todayStr;
+      // Inversion guard: if start date is after end date, normalize by swapping
+      if (s > e) {
+        const tmp = s;
+        s = e;
+        e = tmp;
+      }
+      startCal = s;
+      endCal = e;
     }
 
-    try {
-      const supabase = getSupabase();
+    // start-inclusive, end-exclusive in UTC:
+    const startUtc = new Date(`${startCal}T00:00:00+05:30`).toISOString();
+    const endDate = new Date(`${endCal}T00:00:00+05:30`);
+    endDate.setDate(endDate.getDate() + 1);
+    const endExclusiveUtc = endDate.toISOString();
 
-      // Resolve roles and scopes accurately to determine query filters
-      let activeRole = UserRole.SALES_EXECUTIVE;
-      let activeTeamId: string | null = null;
-      if (filterUserId) {
-        const { data: pData } = await supabase.from('profiles').select('role, team_id').eq('id', filterUserId).maybeSingle();
-        if (pData) {
-          activeRole = pData.role as UserRole;
-          activeTeamId = pData.team_id;
-        }
+    return { startCal, endCal, startUtc, endExclusiveUtc, timezone: 'Asia/Kolkata' };
+  }
+
+  function isTableMissingError(err: any): boolean {
+    if (!err) return false;
+    const code = (err.code || '').toString().trim();
+    const msg = (err.message || '').toString().toLowerCase();
+    const details = (err.details || '').toString().toLowerCase();
+    if (code === '42P01' || code === 'PGRST205') return true;
+    if (msg.includes('relation "cold_call_activities" does not exist') || (msg.includes('cold_call_activities') && msg.includes('schema cache'))) return true;
+    if (details.includes('relation "cold_call_activities" does not exist')) return true;
+    return false;
+  }
+
+  // --- 6. REPORTING DASHBOARD ENDPOINT ---
+  app.get('/api/reports', async (req, res) => {
+    const preset = (req.query.preset as string) || 'today';
+    const customStart = req.query.start as string || undefined;
+    const customEnd = req.query.end as string || undefined;
+
+    const interval = getKolkataInterval(preset, customStart, customEnd);
+    const { startUtc, endExclusiveUtc } = interval;
+
+    try {
+      const supabase = getSupabaseAdmin();
+
+      // 1. Authenticate caller from trusted server-side authentication context
+      let callerToken = (req.headers.authorization || req.headers['x-auth-token'] || req.headers['x-user-id'] || req.query.token || req.query.callerId || '') as string;
+      if (typeof callerToken === 'string' && callerToken.toLowerCase().startsWith('bearer ')) {
+        callerToken = callerToken.slice(7).trim();
       }
+
+      const targetUserIdParam = (req.query.userId as string || '').trim();
+
+      // Fallback for callers passing only query parameter
+      let callerId = callerToken;
+      if (!callerId && targetUserIdParam && targetUserIdParam !== 'all' && targetUserIdParam !== 'all_users' && targetUserIdParam !== 'all_team') {
+        callerId = targetUserIdParam;
+      }
+
+      if (!callerId) {
+        return res.status(401).json({ error: 'Unauthorized. Authentication token or caller identity required.' });
+      }
+
+      // Lookup verified caller profile from database
+      const { data: callerProfile, error: callerErr } = await supabase
+        .from('profiles')
+        .select('id, role, company_id, team_id, is_active, full_name')
+        .eq('id', callerId)
+        .maybeSingle();
+
+      if (callerErr || !callerProfile) {
+        return res.status(401).json({ error: 'Unauthorized. Caller session is invalid or user profile not found.' });
+      }
+
+      if (callerProfile.is_active === false) {
+        return res.status(403).json({ error: 'Forbidden. User account is inactive.' });
+      }
+
+      const callerRole = callerProfile.role as UserRole;
+      // CRITICAL: Bind companyId strictly to caller's verified company_id from database (never trust client query param)
+      const companyId = callerProfile.company_id;
+
+      // 2. Resolve requested target user filter
+      const isConsolidated = !targetUserIdParam || targetUserIdParam === 'all' || targetUserIdParam === 'all_users' || targetUserIdParam === 'all_team';
+      const requestedTargetId = isConsolidated ? null : targetUserIdParam;
 
       let scopedUserIds: string[] | null = null;
-      if (activeRole === UserRole.TEAM_LEADER && activeTeamId) {
-        const { data: teamProfiles } = await supabase.from('profiles').select('id').eq('team_id', activeTeamId);
-        scopedUserIds = (teamProfiles || []).map(tp => tp.id);
-        if (filterUserId && !scopedUserIds.includes(filterUserId)) {
-          scopedUserIds.push(filterUserId);
+      let reportScope = 'consolidated';
+      let targetProfile: any = null;
+
+      if (callerRole === UserRole.SALES_EXECUTIVE) {
+        // Sales Executives must ALWAYS receive their own report, regardless of any userId supplied in the request
+        scopedUserIds = [callerProfile.id];
+        reportScope = 'individual';
+        targetProfile = { id: callerProfile.id, full_name: callerProfile.full_name, role: callerProfile.role };
+      } else if (callerRole === UserRole.TEAM_LEADER) {
+        // Team Leader: may request individual users or consolidated reports ONLY within their authorized team
+        let leaderTeamId = callerProfile.team_id;
+        if (!leaderTeamId) {
+          const { data: tData } = await supabase.from('teams').select('id').eq('team_leader_id', callerProfile.id).maybeSingle();
+          if (tData) leaderTeamId = tData.id;
         }
-      } else if (activeRole === UserRole.SALES_EXECUTIVE && filterUserId) {
-        scopedUserIds = [filterUserId];
+
+        let authorizedTeamUserIds: string[] = [callerProfile.id];
+        if (leaderTeamId) {
+          const { data: members } = await supabase
+            .from('profiles')
+            .select('id, full_name, role')
+            .eq('company_id', companyId)
+            .eq('team_id', leaderTeamId);
+          if (members && members.length > 0) {
+            authorizedTeamUserIds = Array.from(new Set([callerProfile.id, ...members.map(m => m.id)]));
+          }
+        }
+
+        if (isConsolidated) {
+          // Consolidated report for all team members
+          scopedUserIds = authorizedTeamUserIds;
+          reportScope = 'team_consolidated';
+        } else {
+          // Individual user requested: MUST be within the leader's authorized team
+          if (!authorizedTeamUserIds.includes(requestedTargetId!)) {
+            return res.status(403).json({ 
+              error: 'Forbidden. You do not have permission to view reports for users outside your authorized team.' 
+            });
+          }
+          scopedUserIds = [requestedTargetId!];
+          reportScope = 'individual';
+          const { data: targetP } = await supabase.from('profiles').select('id, full_name, role').eq('id', requestedTargetId!).maybeSingle();
+          targetProfile = targetP || null;
+        }
+      } else if (callerRole === UserRole.COMPANY_ADMIN) {
+        // Company Admin: may request individual users or consolidated reports ONLY within their company
+        const { data: companyUsers } = await supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .eq('company_id', companyId);
+
+        const authorizedCompanyUserIds = (companyUsers || []).map(u => u.id);
+
+        if (isConsolidated) {
+          // Consolidated report for all users in the company
+          scopedUserIds = null; // null means all users in company
+          reportScope = 'company_consolidated';
+        } else {
+          // Individual user requested: MUST belong to admin's company
+          if (!authorizedCompanyUserIds.includes(requestedTargetId!)) {
+            return res.status(403).json({ 
+              error: 'Forbidden. You do not have permission to view reports for users outside your company.' 
+            });
+          }
+          scopedUserIds = [requestedTargetId!];
+          reportScope = 'individual';
+          targetProfile = (companyUsers || []).find(u => u.id === requestedTargetId) || null;
+        }
+      } else {
+        return res.status(403).json({ error: 'Forbidden. Unrecognized user role.' });
       }
 
-      // 1. Fetch scoped profiles (avoids duplicate/random company profile leaks)
-      let pQuery = supabase.from('profiles').select('*').eq('company_id', companyId);
+      // ========================================================
+      // SECTION 1: COLD CALLING REPORT
+      // ========================================================
+      const coldCallingReport = {
+        attempted: 0,
+        connected: 0,
+        followupRequired: 0,
+        interested: 0,
+        notInterested: 0,
+        wrongNumber: 0,
+        convertedToLead: 0,
+        totalCallsDone: 0
+      };
+
+      let tableMissing = false;
+
+      let ccaQuery = supabase.from('cold_call_activities')
+        .select('*')
+        .eq('company_id', companyId)
+        .gte('created_at', startUtc)
+        .lt('created_at', endExclusiveUtc);
+
       if (scopedUserIds) {
-        pQuery = pQuery.in('id', scopedUserIds);
+        ccaQuery = ccaQuery.in('user_id', scopedUserIds);
       }
-      const { data: profilesData } = await pQuery;
-      const profiles = profilesData || [];
-      const profileIds = profiles.map(p => p.id);
 
-      // 2. Fetch scoped Updates
-      let uQuery = supabase.from('lead_status_updates').select('*').eq('company_id', companyId).gte('created_at', `${startStr}T00:00:00.000Z`).lte('created_at', `${endStr}T23:59:59.999Z`);
-      if (scopedUserIds) uQuery = uQuery.in('user_id', profileIds);
+      const { data: ccaList, error: ccaErr } = await ccaQuery;
+
+      if (ccaErr) {
+        if (isTableMissingError(ccaErr)) {
+          tableMissing = true;
+          console.warn(`[Cold Call Activities notice]: Table cold_call_activities missing from DB (code: ${ccaErr.code}). Falling back to legacy cold_data query.`);
+        } else {
+          // Unexpected database failure (connection, authorization, invalid syntax) - do not silently fallback!
+          console.error('[Cold Call Activities Query Error]:', ccaErr);
+          return res.status(500).json({ error: `Database error querying activities: ${ccaErr.message || ccaErr.code}` });
+        }
+      } else {
+        // Table exists and query succeeded! Even if ccaList is empty (0 activities), use results authoritatively.
+
+        // 1. Identify which cold contacts were converted in this interval to avoid double-counting conversion qualifications as ordinary Interested calls
+        const convertedColdDataIds = new Set<string>();
+        for (const ev of (ccaList || [])) {
+          const outcome = (ev.call_outcome || '').trim().toLowerCase();
+          if (outcome === 'converted to lead' || outcome === 'converted_to_lead') {
+            if (ev.cold_data_id) convertedColdDataIds.add(ev.cold_data_id);
+          }
+        }
+
+        // 2. Count distinct genuine call activities (deduplicating rapid retries with same idempotency key or within 5s)
+        const seenEventKeys = new Set<string>();
+
+        for (const ev of (ccaList || [])) {
+          const eventKey = ev.idempotency_key || `${ev.cold_data_id}_${ev.call_outcome}_${Math.floor(new Date(ev.created_at).getTime() / 5000)}`;
+          if (seenEventKeys.has(eventKey)) continue;
+          seenEventKeys.add(eventKey);
+
+          const outcome = (ev.call_outcome || '').trim();
+          const lower = outcome.toLowerCase();
+
+          if (lower === 'converted to lead' || lower === 'converted_to_lead') {
+            coldCallingReport.convertedToLead++;
+          } else if (lower.includes('attempted')) {
+            coldCallingReport.attempted++;
+          } else if (lower.includes('connected')) {
+            coldCallingReport.connected++;
+          } else if (lower.includes('followup') || lower.includes('follow-up')) {
+            coldCallingReport.followupRequired++;
+          } else if (lower.includes('wrong')) {
+            coldCallingReport.wrongNumber++;
+          } else if (lower.includes('not interested')) {
+            coldCallingReport.notInterested++;
+          } else if (lower === 'interested' || lower.includes('qualifies for lead')) {
+            // Rule 4: Conversion events must not inflate the Interested count.
+            // If this contact was converted in this interval, the conversion represents the qualification outcome.
+            if (!convertedColdDataIds.has(ev.cold_data_id)) {
+              coldCallingReport.interested++;
+            }
+          }
+        }
+
+        // Rule 2 & 3: Total Calls Done = Attempted + Connected + Follow-up Required + Interested + Not Interested + Wrong Number
+        // Converted to Lead is strictly excluded from Total Calls Done
+        coldCallingReport.totalCallsDone = 
+          coldCallingReport.attempted +
+          coldCallingReport.connected +
+          coldCallingReport.followupRequired +
+          coldCallingReport.interested +
+          coldCallingReport.notInterested +
+          coldCallingReport.wrongNumber;
+      }
+
+      // Fallback ONLY when database explicitly indicates that cold_call_activities is missing
+      if (tableMissing) {
+        let coldQuery = supabase.from('cold_data')
+          .select('id, status, assigned_to, updated_at, created_at')
+          .eq('company_id', companyId)
+          .neq('status', 'New')
+          .gte('updated_at', startUtc)
+          .lt('updated_at', endExclusiveUtc);
+
+        if (scopedUserIds) {
+          coldQuery = coldQuery.in('assigned_to', scopedUserIds);
+        }
+
+        // Query converted leads created within the interval to count conversions accurately
+        let convLeadsQuery = supabase.from('leads')
+          .select('id, converted_from_cold_id, created_at, created_by, assigned_to')
+          .eq('company_id', companyId)
+          .not('converted_from_cold_id', 'is', null)
+          .gte('created_at', startUtc)
+          .lt('created_at', endExclusiveUtc);
+
+        if (scopedUserIds) {
+          convLeadsQuery = convLeadsQuery.in('assigned_to', scopedUserIds);
+        }
+
+        const [{ data: coldRows }, { data: convLeads }] = await Promise.all([
+          coldQuery,
+          convLeadsQuery
+        ]);
+
+        const convertedColdIdsInInterval = new Set<string>();
+        for (const cl of (convLeads || [])) {
+          if (cl.converted_from_cold_id) convertedColdIdsInInterval.add(cl.converted_from_cold_id);
+        }
+
+        for (const r of (coldRows || [])) {
+          // Rule 5: Exclude unedited imported records where updated_at equals created_at
+          if (r.updated_at === r.created_at) continue;
+
+          const outcome = (r.status || '').trim();
+          const lower = outcome.toLowerCase();
+
+          if (lower === 'converted to lead' || lower === 'converted_to_lead') {
+            convertedColdIdsInInterval.add(r.id);
+          } else if (lower.includes('attempted')) {
+            coldCallingReport.attempted++;
+          } else if (lower.includes('connected')) {
+            coldCallingReport.connected++;
+          } else if (lower.includes('followup') || lower.includes('follow-up')) {
+            coldCallingReport.followupRequired++;
+          } else if (lower.includes('wrong')) {
+            coldCallingReport.wrongNumber++;
+          } else if (lower.includes('not interested')) {
+            coldCallingReport.notInterested++;
+          } else if (lower === 'interested') {
+            // Rule 4: Conversion events must not inflate the Interested count
+            if (!convertedColdIdsInInterval.has(r.id)) {
+              coldCallingReport.interested++;
+            }
+          }
+        }
+
+        coldCallingReport.convertedToLead = convertedColdIdsInInterval.size;
+
+        coldCallingReport.totalCallsDone = 
+          coldCallingReport.attempted +
+          coldCallingReport.connected +
+          coldCallingReport.followupRequired +
+          coldCallingReport.interested +
+          coldCallingReport.notInterested +
+          coldCallingReport.wrongNumber;
+      }
+
+      // ========================================================
+      // SECTION 2: LEAD FOLLOWUPS REPORT
+      // ========================================================
+      // 0. Metric: New Leads Added (leads created during interval based on leads.created_at)
+      // Follows company isolation, team scope, and user authorization rules. Attributed to creator (created_by).
+      let leadsCreatedQuery = supabase.from('leads')
+        .select('id, created_by, assigned_to, created_at')
+        .eq('company_id', companyId)
+        .gte('created_at', startUtc)
+        .lt('created_at', endExclusiveUtc);
+
+      const { data: createdLeadsData, error: createdLeadsErr } = await leadsCreatedQuery;
+      if (createdLeadsErr) {
+        console.error('[New Leads Added Query Error]:', createdLeadsErr);
+      }
+
+      let newLeadsAddedCount = 0;
+      const createdList = createdLeadsData || [];
+      if (scopedUserIds) {
+        // Creator attribution: attribute to lead creator (created_by), falling back to assigned_to only if created_by is null
+        newLeadsAddedCount = createdList.filter(l => {
+          const creator = l.created_by || l.assigned_to;
+          return creator && scopedUserIds.includes(creator);
+        }).length;
+      } else {
+        newLeadsAddedCount = createdList.length;
+      }
+
+      // 1. Fetch leads converted from cold calling to track conversion initialization boundaries
+      let convLeadsQuery = supabase.from('leads')
+        .select('id, converted_from_cold_id, created_at')
+        .eq('company_id', companyId)
+        .not('converted_from_cold_id', 'is', null);
+
+      const { data: convLeadsList } = await convLeadsQuery;
+      const convLeadMap = new Map((convLeadsList || []).map(l => [l.id, l]));
+
+      // 2. Fetch all lead_status_updates in the interval
+      let uQuery = supabase.from('lead_status_updates')
+        .select('*')
+        .eq('company_id', companyId)
+        .gte('created_at', startUtc)
+        .lt('created_at', endExclusiveUtc)
+        .order('created_at', { ascending: true });
+
+      if (scopedUserIds) {
+        uQuery = uQuery.in('user_id', scopedUserIds);
+      }
+
       const { data: updatesData } = await uQuery;
-      const updates = updatesData || [];
+      const allUpdates = updatesData || [];
 
-      // 3. Fetch scoped Followups
-      let fQuery = supabase.from('followups').select('*').eq('company_id', companyId).gte('scheduled_at', `${startStr}T00:00:00.000Z`).lte('scheduled_at', `${endStr}T23:59:59.999Z`);
-      if (scopedUserIds) fQuery = fQuery.in('user_id', profileIds);
-      const { data: followupsData } = await fQuery;
-      const sortedFollowups = followupsData || [];
+      // 3. Filter qualifying updates and deduplicate repeated requests without arbitrary 5s window
+      const qualifyingUpdates: any[] = [];
+      const seenLeadUpdateKeys = new Set<string>();
 
-      // 4. Fetch scoped Site Visits
-      let vQuery = supabase.from('site_visits').select('*').eq('company_id', companyId).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
-      if (scopedUserIds) vQuery = vQuery.in('user_id', profileIds);
-      if (filterProjectId) vQuery = vQuery.eq('project_id', filterProjectId);
-      const { data: visitsData } = await vQuery;
-      const visits = visitsData || [];
+      for (const u of allUpdates) {
+        // Exclude initial creation or non-transition records
+        if (u.previous_status === LeadStatus.NEW && u.new_status === LeadStatus.NEW) continue;
 
-      // 5. Fetch scoped Leads
-      let leadsQuery = supabase.from('leads').select('*').eq('company_id', companyId);
-      if (scopedUserIds) leadsQuery = leadsQuery.in('assigned_to', profileIds);
-      const { data: leadsData } = await leadsQuery;
-      let targetLeads = leadsData || [];
-      if (filterProjectId) targetLeads = targetLeads.filter(l => l.project_interests && l.project_interests.includes(filterProjectId));
+        const rem = (u.remark || '').toLowerCase();
+        if (rem.includes('converted call database logging')) continue;
+        if (rem.includes('lead creation lock')) continue;
+        if (rem.includes('bulk importing logging workflow')) continue;
+        if (rem.includes('reassigned assignment to user:')) continue;
+        if (rem.includes('bulk reassigned')) continue;
+        if (rem.includes('updated bulk status locks.')) continue;
+        if (rem.includes('(awaiting admin manual allocation)')) continue;
+        if (rem.includes('imported via bulk sheet')) continue;
+        if (rem.includes('lead assigned on creation')) continue;
+        if (rem.includes('automated import followup log trigger')) continue;
 
-      // Fast Map index setup for in-memory resolution of leads per activity (No N+1 query loop!)
-      const leadMap = new Map(targetLeads.map(l => [l.id, l]));
-      const getLeadsFromIds = (ids: string[]) => {
-        return Array.from(new Set(ids)).map(id => leadMap.get(id)).filter(Boolean);
-      };
+        // Ensure leads originating from cold calling do not receive a duplicate initial Interested event solely because conversion dialog selected Interested
+        const convLead = convLeadMap.get(u.lead_id);
+        if (convLead) {
+          const leadCreatedTime = new Date(convLead.created_at).getTime();
+          const updateTime = new Date(u.created_at).getTime();
+          // If within 5 seconds of lead conversion, previous status is New, and new_status is Interested, this is conversion initialization
+          if (Math.abs(updateTime - leadCreatedTime) < 5000 && u.previous_status === LeadStatus.NEW && u.new_status === LeadStatus.INTERESTED) {
+            continue;
+          }
+        }
 
-      // Fully pre-cache drill down lead mappings for KPI categories
-      const kpiLeads = {
-        calls_attempted: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.ATTEMPTED).map(u => u.lead_id)),
-        calls_connected: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.CONNECTED).map(u => u.lead_id)),
-        followups_planned: getLeadsFromIds(sortedFollowups.map(f => f.lead_id)),
-        followups_completed: getLeadsFromIds(sortedFollowups.filter(f => f.completed).map(f => f.lead_id)),
-        site_visits_planned: getLeadsFromIds(visits.map(v => v.lead_id)),
-        site_visits_completed: getLeadsFromIds(visits.filter(v => v.status === 'visited').map(v => v.lead_id)),
-        bookings: getLeadsFromIds(updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).map(u => u.lead_id))
-      };
+        // Deduplicate repeated requests with the same event ID or identical record fingerprint (lead_id + new_status + exact created_at)
+        // Strictly avoids dropping legitimate distinct events that happen close together in time
+        const eventKey = u.id ? `id_${u.id}` : `${u.lead_id}_${u.new_status}_${u.created_at}`;
+        if (seenLeadUpdateKeys.has(eventKey)) continue;
+        seenLeadUpdateKeys.add(eventKey);
 
-      // Totals calculation
-      const totalCalls = updates.filter(u => ['attempted', 'connected'].some(s => (u.new_status || '').toLowerCase().includes(s))).length;
-      const followupsCompleted = sortedFollowups.filter(f => f.completed).length;
-      const siteVisitsCompleted = visits.filter(v => v.status === 'visited').length;
-      const interestedLeads = updates.filter(u => u.new_status === LeadStatus.INTERESTED).length;
-      const bookings = updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).length;
-
-      const callsAttempted = updates.filter(u => u.new_status === LeadStatus.ATTEMPTED).length;
-      const callsConnected = updates.filter(u => u.new_status === LeadStatus.CONNECTED).length;
-      const followupsPlanned = sortedFollowups.length;
-      const siteVisitsPlanned = visits.length;
-
-      const bookedIds = updates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).map(u => u.lead_id);
-      const revenueGenerated = targetLeads.filter(l => bookedIds.includes(l.id) && l.booking_amount).reduce((sum, l) => sum + Number(l.booking_amount), 0);
-
-      // KPI Engine Calculation logic for current scope
-      const currentKPIResult = kpiEngine.calculateKPI({
-        visitsPlanned: siteVisitsPlanned,
-        visitsCompleted: siteVisitsCompleted,
-        bookingsCount: bookings,
-        revenueGenerated
-      });
-
-      const score = currentKPIResult.score;
-      const remainingKPI = Number((100 - score).toFixed(2));
-      const projections = kpiEngine.getEstimatedCompletion(score, startStr, endStr);
-      const performanceRank = kpiEngine.getPerformanceRank(score);
-      const motivationalStatus = kpiEngine.getMotivationalStatus(score);
-
-      // Construct a single, cached KPI Justification Object
-      const kpiJustification: any = {
-        role: activeRole,
-        monthlySalaryTarget: activeRole === UserRole.TEAM_LEADER ? 100000 : 50000,
-        monthlySalesTarget: activeRole === UserRole.TEAM_LEADER ? 'Team Performance Based' : 10000000,
-        visitsPlanned: siteVisitsPlanned,
-        visitsCompleted: siteVisitsCompleted,
-        bookingsCount: bookings,
-        revenueGenerated,
-        score,
-        remainingKPI,
-        estimatedDate: projections.estimatedDate,
-        estimatedValueAtEnd: projections.estimatedValueAtEnd,
-        performanceRank,
-        motivationalStatus,
-        details: currentKPIResult.metricsDetails
-      };
-
-      // Aggregates for individual Team Leaders' Sales Executives
-      if (activeRole === UserRole.TEAM_LEADER) {
-        const teamMembers = profiles.map(p => {
-          const pUpdates = updates.filter(u => u.user_id === p.id);
-          const pVisits = visits.filter(v => v.user_id === p.id);
-          const pBookings = pUpdates.filter(u => u.new_status === LeadStatus.BOOKING_DONE).length;
-          const pVisitsPlanned = pVisits.length;
-          const pVisitsCompleted = pVisits.filter(v => v.status === 'visited').length;
-          const pRevenue = targetLeads.filter(l => l.assigned_to === p.id && pUpdates.some(u => u.lead_id === l.id && u.new_status === LeadStatus.BOOKING_DONE) && l.booking_amount).reduce((sum, l) => sum + Number(l.booking_amount), 0);
-          
-          const pKpi = kpiEngine.calculateKPI({
-            visitsPlanned: pVisitsPlanned,
-            visitsCompleted: pVisitsCompleted,
-            bookingsCount: pBookings,
-            revenueGenerated: pRevenue
-          });
-
-          return {
-            id: p.id,
-            fullName: p.full_name,
-            avatarUrl: p.avatar_url,
-            score: pKpi.score,
-            visitsPlanned: pVisitsPlanned,
-            visitsCompleted: pVisitsCompleted,
-            bookingsCount: pBookings,
-            performanceRank: kpiEngine.getPerformanceRank(pKpi.score),
-            motivationalStatus: kpiEngine.getMotivationalStatus(pKpi.score)
-          };
-        });
-
-        kpiJustification.teamMembers = teamMembers;
+        qualifyingUpdates.push(u);
       }
 
-      // Setup team report leaderboard data
-      const teamReport = profiles.map(u => {
-        const uUpdates = updates.filter(up => up.user_id === u.id);
-        const b = uUpdates.filter(up => up.new_status === LeadStatus.BOOKING_DONE).length;
-        const c = uUpdates.filter(up => ['attempted', 'connected'].some(s => (up.new_status || '').toLowerCase().includes(s))).length;
-        return {
-          userId: u.id, fullName: u.full_name, role: u.role, avatarUrl: u.avatar_url, totalCalls: c, bookingsCount: b, conversionRatio: 10
-        };
-      });
+      // Count status-transition events by their created_at timestamp
+      // A transition to a status requires previous_status !== target_status (a genuine status change!)
+      const leadFollowupsReport = {
+        newLeadsAdded: newLeadsAddedCount,
+        attempted: qualifyingUpdates.filter(u => u.new_status === LeadStatus.ATTEMPTED).length,
+        connected: qualifyingUpdates.filter(u => u.new_status === LeadStatus.CONNECTED).length,
+        followupScheduled: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.FOLLOWUP_SCHEDULED && u.new_status === LeadStatus.FOLLOWUP_SCHEDULED).length,
+        interested: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.INTERESTED && u.new_status === LeadStatus.INTERESTED).length,
+        siteVisitScheduled: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.SITE_VISIT_SCHEDULED && u.new_status === LeadStatus.SITE_VISIT_SCHEDULED).length,
+        siteVisitDone: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.SITE_VISIT_DONE && u.new_status === LeadStatus.SITE_VISIT_DONE).length,
+        bookingDone: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.BOOKING_DONE && u.new_status === LeadStatus.BOOKING_DONE).length,
+        notInterested: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.NOT_INTERESTED && u.new_status === LeadStatus.NOT_INTERESTED).length,
+        lost: qualifyingUpdates.filter(u => u.previous_status !== LeadStatus.LOST && u.new_status === LeadStatus.LOST).length,
+        totalCallsDone: 0
+      };
 
-      const contactedCount = targetLeads.filter(l => l.status !== LeadStatus.NEW).length;
+      // Part A: Total Calls Done in Lead Followups represents all qualifying logged client interactions/outcomes across all stages
+      leadFollowupsReport.totalCallsDone = 
+        leadFollowupsReport.attempted +
+        leadFollowupsReport.connected +
+        leadFollowupsReport.followupScheduled +
+        leadFollowupsReport.interested +
+        leadFollowupsReport.siteVisitScheduled +
+        leadFollowupsReport.siteVisitDone +
+        leadFollowupsReport.bookingDone +
+        leadFollowupsReport.notInterested +
+        leadFollowupsReport.lost;
+
+      // Maintain backward-compatible summary object for other screens (AICoachScreen)
+      const backwardCompatSummary = {
+        totalCalls: leadFollowupsReport.totalCallsDone,
+        callsAttempted: leadFollowupsReport.attempted,
+        callsConnected: leadFollowupsReport.connected,
+        followupsPlanned: leadFollowupsReport.followupScheduled,
+        followupsDone: leadFollowupsReport.connected,
+        siteVisitsPlanned: leadFollowupsReport.siteVisitScheduled,
+        siteVisitsCompleted: leadFollowupsReport.siteVisitDone,
+        interestedLeads: leadFollowupsReport.interested,
+        bookings: leadFollowupsReport.bookingDone,
+        revenueGenerated: 0
+      };
 
       res.json({
+        preset,
+        interval,
+        coldCallingReport,
+        leadFollowupsReport,
         report: {
-          summary: { 
-            totalCalls, 
-            followupsDone: followupsCompleted, 
-            followupsScheduled: sortedFollowups.length, 
-            siteVisitsPlanned: siteVisitsPlanned, 
-            siteVisitsCompleted, 
-            interestedLeads, 
-            bookings, 
-            revenueGenerated,
-            callsAttempted,
-            callsConnected,
-            followupsPlanned,
-            followupsCompleted
-          },
-          kpiLeads,
-          kpiJustification
+          summary: backwardCompatSummary,
+          kpiLeads: {},
+          kpiJustification: null
         },
-        totals: { 
-          leads: targetLeads.length, 
-          bookingsDone: bookings, 
-          totalRevenueEstimate: revenueGenerated,
-          siteVisitsScheduled: sortedFollowups.length,
-          siteVisitsVisited: siteVisitsCompleted
+        totals: {
+          leads: 0,
+          bookingsDone: leadFollowupsReport.bookingDone,
+          totalRevenueEstimate: 0,
+          siteVisitsScheduled: leadFollowupsReport.siteVisitScheduled,
+          siteVisitsVisited: leadFollowupsReport.siteVisitDone
         },
-        funnel: { 
-          contacted: contactedCount, 
-          siteVisitVisited: siteVisitsCompleted, 
-          booked: bookings 
-        },
-        leaderboard: teamReport.map(t => ({ id: t.userId, full_name: t.fullName, role: t.role, bookingsCount: t.bookingsCount, visitsCount: t.totalCalls })),
-        kpiLeads,
-        kpiJustification
+        funnel: {
+          contacted: leadFollowupsReport.totalCallsDone,
+          siteVisitVisited: leadFollowupsReport.siteVisitDone,
+          booked: leadFollowupsReport.bookingDone
+        }
       });
     } catch (err: any) {
+      console.error('[GET /api/reports Error]:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -3580,6 +3979,13 @@ async function startServer() {
     return res.status(404).send('Asset not found');
   });
 
+
+  // Explicit JSON 404 handler for all /api/* routes to prevent unmatched API requests
+  // from falling through into Vite SPA middleware (which serves index.html with HTTP 200,
+  // causing client JSON parse errors like "Unexpected token '<', '<!doctype '...").
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
+  });
 
   // --- 7. VITE MIDDLEWARE SETUP / STATIC FILE SERVING ---
   if (process.env.NODE_ENV !== "production") {

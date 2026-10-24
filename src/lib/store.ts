@@ -146,7 +146,7 @@ interface AppState {
   setColdFilters: (filters: Partial<AppState['coldFilters']>) => void;
   resetColdFilters: () => void;
   fetchColdData: (filters?: Partial<AppState['coldFilters']>) => Promise<void>;
-  updateColdStatus: (id: string, status: string, notes?: string) => Promise<boolean>;
+  updateColdStatus: (id: string, status: string, notes?: string, idempotencyKey?: string) => Promise<boolean>;
   bulkUploadCold: (records: any[], assignedToUserId?: string) => Promise<{ success: boolean; addedCount: number; duplicateCount: number; results?: any[] }>;
   bulkAssignCold: (recordIds: string[], targetUserId: string) => Promise<boolean>;
   bulkDeleteCold: (recordIds: string[]) => Promise<boolean>;
@@ -233,9 +233,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email, password })
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { success: false, error: 'Server returned an unexpected response. Please try again.' };
+      }
       const data = await res.json();
       if (!res.ok) {
         return { success: false, error: data.error || 'Authentication failed.' };
@@ -274,29 +278,48 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   checkSession: async () => {
-    const token = localStorage.getItem('imcrm_user_token');
-    if (!token) return false;
+    const rawToken = localStorage.getItem('imcrm_user_token');
+    if (!rawToken || rawToken === 'undefined' || rawToken === 'null' || !rawToken.trim()) {
+      localStorage.removeItem('imcrm_user_token');
+      set({ activeUser: null });
+      return false;
+    }
+    const token = rawToken.trim();
     try {
-      const res = await fetch(`/api/auth/me?token=${token}`);
+      const res = await fetch(`/api/auth/me?token=${encodeURIComponent(token)}`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        localStorage.removeItem('imcrm_user_token');
+        set({ activeUser: null });
+        return false;
+      }
+
       if (res.ok) {
         const data = await res.json();
-        set({ activeUser: data.user });
-        
-        // Auto-fetch data on valid session
-        get().fetchStats();
-        get().fetchLeads({ page: 1 });
-        get().fetchColdData();
-        get().fetchProjects();
-        get().fetchReports();
-        get().fetchUsers();
+        if (data?.user) {
+          set({ activeUser: data.user });
+          
+          // Auto-fetch data on valid session
+          get().fetchStats();
+          get().fetchLeads({ page: 1 });
+          get().fetchColdData();
+          get().fetchProjects();
+          get().fetchReports();
+          get().fetchUsers();
 
-        return true;
+          return true;
+        }
       }
       localStorage.removeItem('imcrm_user_token');
       set({ activeUser: null });
       return false;
     } catch (e) {
-      console.error("Session verification failed", e);
+      console.warn("Session verification could not be completed:", e);
+      localStorage.removeItem('imcrm_user_token');
+      set({ activeUser: null });
       return false;
     }
   },
@@ -305,13 +328,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchUsers: async () => {
     set({ isLoadingUsers: true });
     try {
-      const res = await fetch('/api/auth/users');
-      if (res.ok) {
+      const res = await fetch('/api/auth/users', {
+        headers: { 'Accept': 'application/json' }
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        set({ users: data.users });
+        set({ users: data.users || [] });
       }
     } catch (e) {
-      console.error("Failed to load users", e);
+      console.warn("Failed to load users", e);
     } finally {
       set({ isLoadingUsers: false });
     }
@@ -637,10 +663,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const cleanRemark = (remarkText !== undefined && remarkText !== null) ? remarkText.trim() : notes.trim();
+      const idempotencyKey = `lead_status_${id}_${newStatus}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const res = await fetch(`/api/leads/${id}/status-update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
+          idempotency_key: idempotencyKey,
           new_status: newStatus,
           notes,
           remark: notes,
@@ -988,7 +1016,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  updateColdStatus: async (id, status, notes) => {
+  updateColdStatus: async (id, status, notes, idempotencyKey) => {
     const user = get().activeUser;
     if (!user) return false;
     set({ isLoading: true, error: null });
@@ -996,7 +1024,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch(`/api/cold-data/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, notes })
+        body: JSON.stringify({ status, notes, user_id: user.id, idempotency_key: idempotencyKey })
       });
       if (res.ok) {
         // Immediately re-evaluate current canonical cold records against active filters
@@ -1281,13 +1309,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     try {
-      const res = await fetch(url);
-      if (res.ok) {
+      const res = await fetch(url, {
+        headers: { 'Accept': 'application/json' }
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         set({ reportsData: data.report });
       }
     } catch (e) {
-      console.error(e);
+      console.warn('Failed to load reports:', e);
     } finally {
       set({ isLoading: false });
     }
