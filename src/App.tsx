@@ -15,7 +15,6 @@ import ColdCallingScreen from './components/ColdCallingScreen';
 import ReportsScreen from './components/ReportsScreen';
 import LeadSourcesScreen from './components/LeadSourcesScreen';
 import ActivityHistoryScreen from './components/ActivityHistoryScreen';
-import AICoachScreen from './components/AICoachScreen';
 import IntegrationsScreen from './components/IntegrationsScreen';
 import SkeletonLoader from './components/SkeletonLoader';
 import LoginScreen from './components/LoginScreen';
@@ -48,8 +47,6 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard':
         return <DashboardScreen />;
-      case 'ai-coach':
-        return <AICoachScreen />;
       case 'leads':
         return <LeadsScreen />;
       case 'cold-calling':

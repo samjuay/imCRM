@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../lib/store';
+import { UserRole } from '../types';
 import { 
   PhoneCall, 
   PhoneIncoming, 
@@ -15,7 +16,9 @@ import {
   HelpCircle,
   TrendingUp,
   RotateCcw,
-  UserPlus
+  UserPlus,
+  Users,
+  ChevronDown
 } from 'lucide-react';
 
 type DatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
@@ -56,15 +59,76 @@ interface ReportResponse {
   };
   coldCallingReport: ColdCallingReport;
   leadFollowupsReport: LeadFollowupsReport;
+  scope?: string;
+  targetUser?: {
+    id: string;
+    full_name: string;
+    role: string;
+  } | null;
+  filterUserId?: string;
 }
 
 export default function ReportsScreen() {
-  const { activeUser } = useAppStore();
+  const { activeUser, users, fetchUsers } = useAppStore();
 
   const [preset, setPreset] = useState<DatePreset>('today');
+  const [selectedUserId, setSelectedUserId] = useState<string>('all');
   const [reportData, setReportData] = useState<ReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Load company/team users on mount if not already populated
+  useEffect(() => {
+    if (!users || users.length === 0) {
+      fetchUsers();
+    }
+  }, [users, fetchUsers]);
+
+  const isAdmin = activeUser?.role === UserRole.COMPANY_ADMIN;
+  const isTeamLeader = activeUser?.role === UserRole.TEAM_LEADER;
+  const canSelectUser = isAdmin || isTeamLeader;
+
+  // Compute authorized user options based on caller role & permissions
+  const authorizedUsers = useMemo(() => {
+    if (!activeUser || !users) return [];
+    if (isAdmin) {
+      // Company Admin sees all active users in their company
+      return users.filter(u => u.company_id === activeUser.company_id && u.is_active !== false);
+    }
+    if (isTeamLeader) {
+      // Team Leader sees users belonging to their team plus themselves
+      return users.filter(u => 
+        u.company_id === activeUser.company_id && 
+        (u.team_id === activeUser.team_id || u.id === activeUser.id) &&
+        u.is_active !== false
+      );
+    }
+    return [];
+  }, [activeUser, users, isAdmin, isTeamLeader]);
+
+  const formatRole = (role?: string) => {
+    if (!role) return '';
+    if (role === UserRole.COMPANY_ADMIN) return 'Admin';
+    if (role === UserRole.TEAM_LEADER) return 'Team Leader';
+    if (role === UserRole.SALES_EXECUTIVE) return 'Sales Exec';
+    return role;
+  };
+
+  const selectedScopeLabel = useMemo(() => {
+    if (!activeUser) return '';
+    if (!canSelectUser) {
+      return `My Performance (${activeUser.full_name})`;
+    }
+    if (selectedUserId === 'all') {
+      return isAdmin 
+        ? 'Company Consolidated (All Users)' 
+        : 'Team Consolidated (All Team Members)';
+    }
+    const target = authorizedUsers.find(u => u.id === selectedUserId);
+    return target 
+      ? `Individual: ${target.full_name} (${formatRole(target.role)})`
+      : 'Individual User';
+  }, [activeUser, canSelectUser, selectedUserId, isAdmin, authorizedUsers]);
 
   const getTodayKolkata = () => {
     try {
@@ -84,13 +148,30 @@ export default function ReportsScreen() {
     setError(null);
 
     try {
-      let url = `/api/reports?preset=${preset}&userId=${encodeURIComponent(activeUser.id)}&companyId=${encodeURIComponent(activeUser.company_id)}`;
+      const token = localStorage.getItem('imcrm_user_token') || activeUser.id;
+      let url = `/api/reports?preset=${preset}`;
+      
+      // Pass requested user filter if caller has permission; Sales Executives default to themselves
+      if (canSelectUser && selectedUserId) {
+        url += `&userId=${encodeURIComponent(selectedUserId)}`;
+      } else {
+        url += `&userId=${encodeURIComponent(activeUser.id)}`;
+      }
+
       if (preset === 'custom') {
         url += `&start=${encodeURIComponent(customStartDate)}&end=${encodeURIComponent(customEndDate)}`;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
       if (!res.ok) {
+        if (res.status === 403) {
+          throw new Error('You do not have permission to view reports for the requested user or scope.');
+        }
         throw new Error(`Failed to load reports (Status: ${res.status})`);
       }
       const data: ReportResponse = await res.json();
@@ -105,7 +186,7 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     fetchReports();
-  }, [preset, customStartDate, customEndDate, activeUser]);
+  }, [preset, customStartDate, customEndDate, activeUser, selectedUserId]);
 
   // Format date interval for header display
   const formatDateLabel = () => {
@@ -139,10 +220,21 @@ export default function ReportsScreen() {
       {/* 1. TOP BAR: DATE FILTERS ONLY */}
       <header className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold font-display text-slate-900 tracking-tight">
-            Performance Reports
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 font-medium">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-xl sm:text-2xl font-bold font-display text-slate-900 tracking-tight">
+              Performance Reports
+            </h1>
+            {selectedScopeLabel && (
+              <span className={`px-2.5 py-0.5 text-[11px] font-semibold rounded-full border ${
+                selectedUserId === 'all'
+                  ? 'bg-slate-100 text-slate-700 border-slate-200'
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+              }`}>
+                {selectedScopeLabel}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 font-medium flex-wrap">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
             <span>Real-time activity metrics</span>
             {reportData?.interval && (
@@ -182,6 +274,63 @@ export default function ReportsScreen() {
           ))}
         </nav>
       </header>
+
+      {/* 2. USER SELECTOR BAR (For Company Admin & Team Leader) */}
+      {canSelectUser && (
+        <section 
+          aria-label="Report For User Selector"
+          className="bg-white p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3.5 animate-fade-in"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-slate-100/80 rounded-xl text-slate-700">
+              <Users className="w-4 h-4 text-slate-700" />
+            </div>
+            <div>
+              <span className="text-[10.5px] font-bold uppercase tracking-wider text-slate-500 block">
+                Report For
+              </span>
+              <span className="text-xs font-semibold text-slate-800">
+                {selectedScopeLabel}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative w-full sm:w-72">
+              <label htmlFor="report_user_select" className="sr-only">Select User</label>
+              <select
+                id="report_user_select"
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="w-full min-h-[42px] pl-3.5 pr-8 py-2 text-xs font-semibold border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#0B1F33] focus:border-transparent focus:outline-none bg-slate-50 text-slate-900 cursor-pointer appearance-none transition-all shadow-xs"
+              >
+                <option value="all">
+                  {isAdmin ? 'All Users (Company Consolidated)' : 'All Team Members (Consolidated)'}
+                </option>
+                {authorizedUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({formatRole(u.role)})
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-500">
+                <ChevronDown className="w-4 h-4" />
+              </div>
+            </div>
+
+            {selectedUserId !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setSelectedUserId('all')}
+                title="Reset to Consolidated View"
+                className="min-h-[42px] px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all whitespace-nowrap"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Custom Date Range Picker (Single-column mobile friendly) */}
       {preset === 'custom' && (

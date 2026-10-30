@@ -83,6 +83,23 @@ export interface LeadSource {
   updated_at: string;
 }
 
+export const CONFIGURATION_PREFERENCE_OPTIONS = [
+  '1 BHK',
+  '2 BHK',
+  '2.5 BHK',
+  '3 BHK',
+  '3.5 BHK',
+  '4 BHK',
+  '4.5 BHK',
+  'Garden Apartment',
+  'Penthouse',
+  'Villa/Bungalow/Rowhouse',
+  'Studio',
+  'Commercial'
+] as const;
+
+export type ConfigurationPreference = typeof CONFIGURATION_PREFERENCE_OPTIONS[number];
+
 export interface Lead {
   id: string;
   company_id: string;
@@ -96,7 +113,7 @@ export interface Lead {
   project_interests: string[]; // List of project IDs
   budget_min?: number;
   budget_max?: number;
-  bedroom_preference?: string; // e.g. "1BHK", "2BHK", "3BHK"
+  bedroom_preference?: ConfigurationPreference | string; // e.g. "1 BHK", "2 BHK", "Studio", "Commercial"
   remarks?: string; // Permanent Lead-Level Remarks / Notes
   status: LeadStatus;
   assigned_to: string; // User ID

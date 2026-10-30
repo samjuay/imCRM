@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { useAppStore } from '../lib/store';
-import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus, History, Sparkles, Share2 } from 'lucide-react';
+import { LayoutDashboard, Users, Building, BarChart3, PhoneCall, LogOut, ShieldCheck, ListPlus, History, Share2 } from 'lucide-react';
 import { UserRole, getInitials } from '../types';
 import ImCrmLogo from './ImCrmLogo';
 
@@ -14,7 +14,6 @@ export default function SidebarNavigation() {
 
   const navItems = [
     { id: 'dashboard', label: 'Home Dashboard', icon: LayoutDashboard, desc: 'Performance stats & action' },
-    { id: 'ai-coach', label: 'AI Performance Coach', icon: Sparkles, desc: 'Intelligent daily suggestions' },
     { id: 'leads', label: 'Leads Pipeline', icon: Users, desc: 'Real estate leads list' },
     { id: 'projects', label: 'Project Inventory', icon: Building, desc: 'Physical towers & units' },
     { id: 'activity-history', label: 'Activity History', icon: History, desc: 'Real-time timeline audit' },

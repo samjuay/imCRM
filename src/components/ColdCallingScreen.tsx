@@ -814,6 +814,8 @@ export default function ColdCallingScreen() {
                   <option value="Garden Apartment">Garden Apartment</option>
                   <option value="Penthouse">Penthouse</option>
                   <option value="Villa/Bungalow/Rowhouse">Villa/Bungalow/Rowhouse</option>
+                  <option value="Studio">Studio</option>
+                  <option value="Commercial">Commercial</option>
                 </select>
               </div>
 

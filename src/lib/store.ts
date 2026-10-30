@@ -15,7 +15,7 @@ interface AppState {
   isLoadingUsers: boolean;
   
   // Navigation & UI Tabs
-  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources' | 'activity-history' | 'ai-coach' | 'integrations';
+  activeTab: 'dashboard' | 'leads' | 'projects' | 'reports' | 'cold-calling' | 'lead-sources' | 'activity-history' | 'integrations';
   activeLeadId: string | null;
   activeProjectId: string | null;
   activeDrawerCard: string | null;
@@ -1297,9 +1297,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     
     let url = `/api/reports?companyId=${user.company_id}&preset=${get().reportsPreset}`;
     if (get().reportsFilterUserId) {
-      url += `&userId=${get().reportsFilterUserId}`;
+      url += `&userId=${encodeURIComponent(get().reportsFilterUserId)}`;
     } else {
-      url += `&userId=${user.id}`;
+      url += `&userId=${encodeURIComponent(user.id)}`;
     }
     if (get().reportsFilterProjectId) {
       url += `&projectId=${get().reportsFilterProjectId}`;
@@ -1309,8 +1309,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     try {
+      const token = localStorage.getItem('imcrm_user_token') || user.id;
       const res = await fetch(url, {
-        headers: { 'Accept': 'application/json' }
+        headers: { 
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
       });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {

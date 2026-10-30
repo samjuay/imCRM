@@ -813,8 +813,8 @@ export default function LeadsScreen() {
 
     const selectedLeads = leads.filter(l => selectedLeadIds.includes(l.id));
     const csvContent = "data:text/csv;charset=utf-8," 
-      + ["Name,Phone,Email,Status,Source"].join(",") + "\n"
-      + selectedLeads.map(l => `"${l.full_name}","${l.phone}","${l.email || ''}","${l.status}","${l.source_id}"`).join("\n");
+      + ["Name,Phone,Email,Status,Source,Configuration"].join(",") + "\n"
+      + selectedLeads.map(l => `"${l.full_name}","${l.phone}","${l.email || ''}","${l.status}","${l.source_id}","${(l.bedroom_preference || '').split('|')[0] || ''}"`).join("\n");
       
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -2767,6 +2767,8 @@ export default function LeadsScreen() {
                 <option value="Garden Apartment">Garden Apartment</option>
                 <option value="Penthouse">Penthouse</option>
                 <option value="Villa/Bungalow/Rowhouse">Villa/Bungalow/Rowhouse</option>
+                <option value="Studio">Studio</option>
+                <option value="Commercial">Commercial</option>
               </select>
             </div>
           </div>

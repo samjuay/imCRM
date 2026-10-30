@@ -501,6 +501,61 @@ export default function LoginScreen() {
                     )}
                   </button>
                 </form>
+
+                {/* Quick Account Selector & Password Helper */}
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      Quick Team Accounts
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Password: <code className="font-mono bg-slate-100 text-slate-700 px-1 py-0.5 rounded font-bold">password</code>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { name: 'Sam Juay', email: 'samjuay@gmail.com', role: 'Team Leader', badge: 'Leader' },
+                      { name: 'Company Admin', email: 'projectimmation@gmail.com', role: 'Admin', badge: 'Admin' },
+                      { name: 'Jitendra Ahire', email: 'ahirejiten23@gmail.com', role: 'Sales Exec', badge: 'Sales' },
+                      { name: 'Roshnii Chaanner', email: 'roshniichaanner@gmail.com', role: 'Sales Exec', badge: 'Sales' }
+                    ].map((acc) => (
+                      <button
+                        key={acc.email}
+                        type="button"
+                        onClick={async () => {
+                          setEmail(acc.email);
+                          setPassword('password');
+                          setLocalError(null);
+                          setIsLoading(true);
+                          try {
+                            const res = await login(acc.email, 'password');
+                            if (!res.success) {
+                              setLocalError(res.error || 'Authentication failed.');
+                            }
+                          } catch (err: any) {
+                            setLocalError('Unable to connect.');
+                          } finally {
+                            setIsLoading(false);
+                          }
+                        }}
+                        className="p-2 bg-slate-50 hover:bg-slate-100/90 border border-slate-200/90 rounded-xl text-left transition-all hover:border-premium-gold/50 cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-800 group-hover:text-primary-navy truncate block">
+                            {acc.name}
+                          </span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 bg-slate-200 text-slate-700 rounded-full">
+                            {acc.badge}
+                          </span>
+                        </div>
+                        <span className="text-[9.5px] text-slate-400 truncate block mt-0.5">
+                          {acc.email}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
 
